@@ -36,9 +36,9 @@ public class ConstellationCanvas extends AWTGLCanvas{
     
     @Override
     public void initGL() {
-        if (!GLFW.glfwInit()) {
-            throw new IllegalStateException("Unable to initialize GLFW");
-        }       
+        //if (!GLFW.glfwInit()) {
+        //    throw new IllegalStateException("Unable to initialize GLFW");
+        //}       
         
         // COMMENT SOURCE: https://www.lwjgl.org/guide
         // This line is critical for LWJGL's interoperation with GLFW's
