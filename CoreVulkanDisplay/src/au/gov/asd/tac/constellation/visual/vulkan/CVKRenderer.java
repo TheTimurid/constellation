@@ -97,7 +97,9 @@ public class CVKRenderer implements ComponentListener {
     // we can account for our scene being populated before we've created the swapchain.    
     protected CVKSynchronizedDescriptorTypeCounts desiredPoolDescriptorTypeCounts = new CVKSynchronizedDescriptorTypeCounts();   
        
-
+    // Number of descriptor sets required
+    protected int desiredPoolDescriptorSetCount = 0;
+    
     public List<CVKRenderable> renderables = new ArrayList<>();
     
     private static float clrChange = 0.01f;
@@ -118,8 +120,10 @@ public class CVKRenderer implements ComponentListener {
         // returning the correct numbers for your Descriptor Types.
         // TODO_TT: this code sucks, make it not. Also change 11 to TOTAL_DESCRIPTOR_TYPES
         int[] descriptorTypeCounts = new int[11];
-        renderables.forEach(r -> {r.IncrementDescriptorTypeRequirements(descriptorTypeCounts);});    
-        desiredPoolDescriptorTypeCounts.Set(descriptorTypeCounts);        
+        int descriptorSetCount = 0;
+        renderables.forEach(r -> {r.IncrementDescriptorTypeRequirements(descriptorTypeCounts, descriptorSetCount);});    
+        desiredPoolDescriptorTypeCounts.Set(descriptorTypeCounts);
+        desiredPoolDescriptorSetCount = descriptorSetCount;
     }
     
     public CVKDevice GetDevice() {
@@ -176,7 +180,7 @@ public class CVKRenderer implements ComponentListener {
         if (parent.surfaceReady()) {
             cvkDevice.WaitIdle();
             CVKSwapChain newSwapChain = new CVKSwapChain(cvkDevice);                                 
-            ret = newSwapChain.Init(desiredPoolDescriptorTypeCounts);
+            ret = newSwapChain.Init(desiredPoolDescriptorTypeCounts, desiredPoolDescriptorSetCount);
             desiredPoolDescriptorTypeCounts.ResetDirty();
             if (VkSucceeded(ret)) {
                 if (cvkSwapChain != null) {
@@ -245,8 +249,9 @@ public class CVKRenderer implements ComponentListener {
         VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
         beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
 
-        VkClearValue.Buffer clearValues = VkClearValue.callocStack(1, stack);
+        VkClearValue.Buffer clearValues = VkClearValue.callocStack(2, stack);
         clearValues.color().float32(stack.floats(clr.getR(), clr.getG(), clr.getB(), 1.0f));
+        clearValues.get(1).depthStencil().set(1.0f, 0);
         
         VkRenderPassBeginInfo renderPassInfo = VkRenderPassBeginInfo.callocStack(stack);
         renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
@@ -461,7 +466,8 @@ public class CVKRenderer implements ComponentListener {
             }
             
             if (desiredPoolDescriptorTypeCounts.IsDirty()) {
-                cvkSwapChain.UpdateDescriptorTypeRequirements(desiredPoolDescriptorTypeCounts);
+                cvkSwapChain.UpdateDescriptorTypeRequirements(desiredPoolDescriptorTypeCounts,
+                                                              desiredPoolDescriptorSetCount);
                 desiredPoolDescriptorTypeCounts.ResetDirty();
             }            
             
