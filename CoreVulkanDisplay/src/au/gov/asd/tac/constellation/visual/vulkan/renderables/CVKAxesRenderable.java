@@ -69,7 +69,6 @@ import static org.lwjgl.vulkan.VK10.vkCreateGraphicsPipelines;
 import static org.lwjgl.vulkan.VK10.vkCreatePipelineLayout;
 import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
 import static org.lwjgl.vulkan.VK10.vkDestroyPipeline;
-import static org.lwjgl.vulkan.VK10.vkDestroyPipelineLayout;
 import static org.lwjgl.vulkan.VK10.*;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
@@ -112,6 +111,7 @@ import org.lwjgl.vulkan.VkDescriptorBufferInfo;
 import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
+import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
 import org.lwjgl.vulkan.VkWriteDescriptorSet;
 
 public class CVKAxesRenderable extends CVKRenderable {
@@ -147,6 +147,7 @@ public class CVKAxesRenderable extends CVKRenderable {
     private VertexUniformBufferObject vertexUBO = new VertexUniformBufferObject();
     protected List<CVKBuffer> vertexUniformBuffers = null;
     protected List<CVKBuffer> vertexBuffers = null;
+    private List<CVKCommandBuffer> commandBuffers = null;
     
     private List<Long> pipelines = null;
     private List<Long> pipelineLayouts = null;
@@ -273,16 +274,14 @@ public class CVKAxesRenderable extends CVKRenderable {
             vertexUniformBuffers = null;
         }
         
-        // Destory pipeline and layout
-        if (0 != graphicsPipeline) {
-            vkDestroyPipeline(cvkDevice.GetDevice(), graphicsPipeline, null);
-            graphicsPipeline = 0;
-        }
-        
-        if (0 != pipelineLayout) {
-            vkDestroyPipelineLayout(cvkDevice.GetDevice(), pipelineLayout, null);
-            pipelineLayout = 0;
-        }
+        if (pipelines != null) {
+            for (int i = 0; i < pipelines.size(); ++i) {
+                vkDestroyPipeline(cvkDevice.GetDevice(), pipelines.get(i), null);
+                pipelines.set(i, VK_NULL_HANDLE);
+            }
+            pipelines.clear();
+            pipelines = null;
+        }       
     }
     
     @Override
@@ -661,6 +660,20 @@ public class CVKAxesRenderable extends CVKRenderable {
                 multisampling.sampleShadingEnable(false);
                 multisampling.rasterizationSamples(VK_SAMPLE_COUNT_1_BIT);
 
+		// ===> DEPTH <===
+            
+                // Even though we don't test depth, the renderpass created by CVKSwapChain is used by
+                // each renderable and it was created to have a depth attachment
+                VkPipelineDepthStencilStateCreateInfo depthStencil = VkPipelineDepthStencilStateCreateInfo.callocStack(stack);
+                depthStencil.sType(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
+                depthStencil.depthTestEnable(false);
+                depthStencil.depthWriteEnable(false);
+                depthStencil.depthCompareOp(VK_COMPARE_OP_ALWAYS);
+                depthStencil.depthBoundsTestEnable(false);
+                depthStencil.minDepthBounds(0.0f); // Optional
+                depthStencil.maxDepthBounds(1.0f); // Optional
+                depthStencil.stencilTestEnable(false);
+
                 // ===> COLOR BLENDING <===
                 VkPipelineColorBlendAttachmentState.Buffer colorBlendAttachment = VkPipelineColorBlendAttachmentState.callocStack(1, stack);
                 colorBlendAttachment.colorWriteMask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
@@ -912,4 +925,9 @@ public class CVKAxesRenderable extends CVKRenderable {
         return VK_SUCCESS;
     }    
 
+    @Override
+    public VkCommandBuffer GetCommandBuffer(int imageIndex)
+    {
+        return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
+    }    
 }
