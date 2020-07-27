@@ -2,11 +2,7 @@
 
 
 // === UNIFORMS
-//layout(std140, binding = 0) uniform UniformBlock {
-//    mat4 mvpMatrix;
-//}ub;
-
-layout(std140, push_constant, row_major) uniform PushBlock {
+layout(std140, push_constant) uniform PushBlock {
     mat4 mvpMatrix;
 }ub;
 
