@@ -72,6 +72,9 @@ public final class VisualManager {
     private boolean indigenousChanges = false;
     private boolean refreshProcessor = false;
     private boolean shouldRedraw = false;
+    private static boolean continuousRedrawing = false;
+    
+    public static void ToggleContinuousRedraw() { continuousRedrawing = !continuousRedrawing; }
 
     /**
      * Construct a VisualManager to delegate between the supplied
@@ -128,6 +131,10 @@ public final class VisualManager {
                 while (isProcessing) {
                     final NavigableSet<VisualChange> changes = new TreeSet<>();
                     while (true) {
+                        // Continuous rendering is not necessary but useful for debugging the rendering code
+                        if (continuousRedrawing) { 
+                            shouldRedraw = true;
+                        }
                         try {
                             final VisualOperation operation = operationQueue.take();
                             if (operation == SIGNIFY_PROCESSOR_IDLE_OPERATION) {

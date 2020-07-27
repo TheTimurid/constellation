@@ -107,11 +107,11 @@ public class CVKHitTester extends CVKRenderable {
     }
     
     @Override
-    public void IncrementDescriptorTypeRequirements(int descriptorTypeCounts[], int descriptorSetCount) {}     
+    public void IncrementDescriptorTypeRequirements(CVKSwapChain.CVKDescriptorPoolRequirements reqs, CVKSwapChain.CVKDescriptorPoolRequirements perImageReqs) {}     
     @Override
     public int RecordCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index) { return VK_SUCCESS;}
     @Override
     public int GetVertexCount() { return 0; }
     @Override
-    public int DeviceInitialised(CVKDevice cvkDevice) { return VK_SUCCESS;}    
+    public int Initialise(CVKDevice cvkDevice) { return VK_SUCCESS;}    
 }

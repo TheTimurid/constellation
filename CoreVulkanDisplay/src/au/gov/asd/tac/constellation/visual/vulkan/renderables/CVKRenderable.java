@@ -25,21 +25,18 @@ import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 public abstract class CVKRenderable {
     protected CVKVisualProcessor parent;
     protected CVKDevice cvkDevice = null;
-    
-//    protected long pipelineLayout = 0;
-//    protected long graphicsPipeline = 0;
-//    protected List<CVKCommandBuffer> commandBuffers = null;
-//    protected PointerBuffer handlePointer;
-//    
-//    protected long vertexBuffer = 0;
-//    protected long vertexBufferMemory = 0;
-//        
-//    protected List<CVKBuffer> vertUniformBuffers = null;
-//    protected List<CVKBuffer> geomUniformBuffers = null;
-//    protected List<CVKBuffer> vertBuffers = null;
-    
     protected boolean isDirty = true;
     protected boolean isInitialised = false;
+    
+    /**
+     * This is called either when a new renderable is added to CVKRenderer or
+     * it the renderer has not been initialised itself at that point, called
+     * when the renderer is initialised.
+     * 
+     * @param cvkDevice
+     * @return
+     */
+    public abstract int Initialise(CVKDevice cvkDevice);
     
     /*
         Cleanup
@@ -50,10 +47,6 @@ public abstract class CVKRenderable {
         Returns the command buffer for the current Image being sent
         to the GFX drivers
     */
-//    public VkCommandBuffer GetCommandBuffer(int index)
-//    {
-//        return commandBuffers.get(index).GetVKCommandBuffer(); 
-//    }
     public abstract VkCommandBuffer GetCommandBuffer(int imageIndex);        
         
     /**
@@ -72,7 +65,7 @@ public abstract class CVKRenderable {
      * @return error code
     */
     public abstract int CreateSwapChainResources(CVKSwapChain cvkSwapChain);
-    public abstract void IncrementDescriptorTypeRequirements(int descriptorTypeCounts[], int descriptorSetCount);        
+    public abstract void IncrementDescriptorTypeRequirements(CVKSwapChain.CVKDescriptorPoolRequirements reqs, CVKSwapChain.CVKDescriptorPoolRequirements perImageReqs);
     public abstract int RecordCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index);
 
     /*
@@ -84,9 +77,7 @@ public abstract class CVKRenderable {
         TODO HYDRA: Clarify what this means
         Return true if this renderable needs to be updated
     */
-    public boolean IsDirty(){ return isDirty; }
-
-    public abstract int DeviceInitialised(CVKDevice cvkDevice);
+    public boolean IsDirty(){ return isDirty; }    
     
     public boolean NeedsDisplayUpdate() { return false; }
     public int DisplayUpdate() { return VK_SUCCESS; }

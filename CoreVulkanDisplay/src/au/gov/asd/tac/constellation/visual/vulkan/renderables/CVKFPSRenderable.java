@@ -20,11 +20,12 @@ import au.gov.asd.tac.constellation.utilities.graphics.Matrix44f;
 import au.gov.asd.tac.constellation.utilities.graphics.Vector3f;
 import au.gov.asd.tac.constellation.utilities.graphics.Vector4f;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDevice;
-import au.gov.asd.tac.constellation.visual.vulkan.CVKShaderUtils;
+import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKSwapChain;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.CVKAssert;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.CVKLOGGER;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.VkSucceeded;
+import au.gov.asd.tac.constellation.visual.vulkan.CVKSwapChain.CVKDescriptorPoolRequirements;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKLOGGER;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkSucceeded;
 import au.gov.asd.tac.constellation.visual.vulkan.shaders.CVKShaderPlaceHolder;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -36,10 +37,10 @@ import static org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX;
 import static org.lwjgl.vulkan.VK10.VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.LoadFileToDirectBuffer;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.VerifyInRenderThread;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.VkFailed;
-import static au.gov.asd.tac.constellation.visual.vulkan.CVKUtils.checkVKret;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.LoadFileToDirectBuffer;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VerifyInRenderThread;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
@@ -62,7 +63,6 @@ import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE
 import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_ALWAYS;
 import static org.lwjgl.vulkan.VK10.VK_CULL_MODE_BACK_BIT;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FRONT_FACE_COUNTER_CLOCKWISE;
@@ -134,6 +134,9 @@ import org.lwjgl.vulkan.VkPipelineDepthStencilStateCreateInfo;
 
 
 public class CVKFPSRenderable extends CVKRenderable {
+    // Static so we recreate descriptor layouts and shaders for each graph
+    private static boolean staticInitialised = false;
+    
     private static final int MAX_DIGITS = 4;
     private static final int ICON_BITS = 16;
     private static final int ICON_MASK = 0xffff;    
@@ -146,7 +149,7 @@ public class CVKFPSRenderable extends CVKRenderable {
     private static long hVertexShader = VK_NULL_HANDLE;
     private static long hGeometryShader = VK_NULL_HANDLE;
     private static long hFragmentShader = VK_NULL_HANDLE;
-    private static long hDescriptorLayout = VK_NULL_HANDLE;    
+    private long hDescriptorLayout = VK_NULL_HANDLE;    
     
     private final Vector3f bottomRightCorner = new Vector3f();
     private float pyScale = 0;
@@ -175,7 +178,8 @@ public class CVKFPSRenderable extends CVKRenderable {
     
     private boolean needsDisplayUpdate = false;
     private boolean needsResize = false;
-    
+    private int counter = 0;
+
  
     @Override
     public boolean IsDirty(){return isDirty; }
@@ -314,7 +318,104 @@ public class CVKFPSRenderable extends CVKRenderable {
             buffer.putFloat(pixelDensity);
             buffer.putFloat(pScale);
         }             
+    }    
+    
+    
+    private static int LoadShaders(CVKDevice cvkDevice) {
+        int ret = VK_SUCCESS;
+        
+        try {
+            ByteBuffer vsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.vs.spv");
+            if (vsBytes.capacity() == 0) {
+                throw new RuntimeException("Failed to load compiled/SimpleIcon.vs.spv");
+            }
+            ByteBuffer gsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.gs.spv");
+            if (vsBytes.capacity() == 0) {
+                throw new RuntimeException("Failed to load compiled/SimpleIcon.gs.spv");
+            }            
+            ByteBuffer fsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.fs.spv");
+            if (vsBytes.capacity() == 0) {
+                throw new RuntimeException("Failed to load compiled/SimpleIcon.fs.spv");
+            }            
+            
+            hVertexShader = CVKShaderUtils.createShaderModule(vsBytes, cvkDevice.GetDevice());
+            if (hVertexShader == VK_NULL_HANDLE) {
+                throw new RuntimeException("Failed to create shader from SimpleIcon.vs.spv bytes");
+            }            
+            hGeometryShader = CVKShaderUtils.createShaderModule(gsBytes, cvkDevice.GetDevice());
+            if (hGeometryShader == VK_NULL_HANDLE) {
+                throw new RuntimeException("Failed to create shader from SimpleIcon.gs.spv bytes");
+            }             
+            hFragmentShader = CVKShaderUtils.createShaderModule(fsBytes, cvkDevice.GetDevice());            
+            if (hFragmentShader == VK_NULL_HANDLE) {
+                throw new RuntimeException("Failed to create shader from SimpleIcon.fs.spv bytes");
+            }      
+            
+            MemoryUtil.memFree(vsBytes);
+            MemoryUtil.memFree(gsBytes);
+            MemoryUtil.memFree(fsBytes);
+        } catch (IOException e) {
+            //TODO_TT
+        }
+        
+        return ret;
     }       
+    private int CreateDescriptorLayout(CVKDevice cvkDevice) {
+        int ret;
+        
+        try(MemoryStack stack = stackPush()) {
+            /*
+            Vertex shader needs a uniform buffer.
+            Geometry shader needs a different uniform buffer.
+            Fragment shader needs a sampler2Darray
+            */
+
+            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.callocStack(3, stack);
+
+            VkDescriptorSetLayoutBinding vertexUBOLayout = bindings.get(0);
+            vertexUBOLayout.binding(0);
+            vertexUBOLayout.descriptorCount(1);
+            vertexUBOLayout.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            vertexUBOLayout.pImmutableSamplers(null);
+            vertexUBOLayout.stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
+            
+            VkDescriptorSetLayoutBinding geomUBOLayout = bindings.get(1);
+            geomUBOLayout.binding(1);
+            geomUBOLayout.descriptorCount(1);
+            geomUBOLayout.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            geomUBOLayout.pImmutableSamplers(null);
+            geomUBOLayout.stageFlags(VK_SHADER_STAGE_GEOMETRY_BIT);            
+
+            VkDescriptorSetLayoutBinding samplerLayoutBinding = bindings.get(2);
+            samplerLayoutBinding.binding(2);
+            samplerLayoutBinding.descriptorCount(1);
+            samplerLayoutBinding.descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            samplerLayoutBinding.pImmutableSamplers(null);
+            samplerLayoutBinding.stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.callocStack(stack);
+            layoutInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
+            layoutInfo.pBindings(bindings);
+
+            LongBuffer pDescriptorSetLayout = stack.mallocLong(1);
+
+            ret = vkCreateDescriptorSetLayout(cvkDevice.GetDevice(), layoutInfo, null, pDescriptorSetLayout);
+            if (VkSucceeded(ret)) {
+                hDescriptorLayout = pDescriptorSetLayout.get(0);
+            }
+        }        
+        return ret;
+    }
+    public static int StaticInitialise(CVKDevice cvkDevice) {
+        int ret = VK_SUCCESS;
+        if (!staticInitialised) {
+            LoadShaders(cvkDevice);
+            if (VkFailed(ret)) { return ret; }
+//            ret = CreateDescriptorLayout(cvkDevice);
+            staticInitialised = true;
+        }
+        return ret;
+    }
     
     
     public CVKFPSRenderable(CVKVisualProcessor visualProcessor) {
@@ -330,14 +431,6 @@ public class CVKFPSRenderable extends CVKRenderable {
     @Override
     public int GetVertexCount(){ return 4; }
   
-    public int Init() {
-        int ret = VK_SUCCESS;
-        for (int digit = 0; digit < 10; ++digit) {
-            // Returns the index of the icon, not a success code
-            parent.GetTextureAtlas().AddIcon(Integer.toString(digit));
-        }
-        return ret;
-    }
     
     // LIFTED FROM FPSRenderable.java
     private float calculateXProjectionScale(final int[] viewport) {
@@ -382,14 +475,14 @@ public class CVKFPSRenderable extends CVKRenderable {
         for (int i = 0; i < imageCount; ++i) {   
             CVKBuffer vertUniformBuffer = CVKBuffer.Create(cvkDevice, 
                                                           VertexUniformBufferObject.SIZEOF,
-                                                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             vertUniformBuffer.DEBUGNAME = String.format("CVKFPSRenderable vertUniformBuffer %d", i);   
             vertexUniformBuffers.add(vertUniformBuffer);            
             
             CVKBuffer geomUniformBuffer = CVKBuffer.Create(cvkDevice, 
                                                           GeometryUniformBufferObject.SIZEOF,
-                                                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             geomUniformBuffer.DEBUGNAME = String.format("CVKFPSRenderable geomUniformBuffer %d", i);                                    
             geometryUniformBuffers.add(geomUniformBuffer);            
@@ -455,31 +548,46 @@ public class CVKFPSRenderable extends CVKRenderable {
         
         // Get the projection matrix from our parent
         geometryUBO.pMatrix.set(parent.GetProjectionMatrix());
+        
+
+
+        // Staging buffer so our VB can be device local (most performant memory)
+        int size = VertexUniformBufferObject.SIZEOF;
+        PointerBuffer pData = stack.mallocPointer(1);        
+        CVKBuffer cvkVertUBStagingBuffer = CVKBuffer.Create(cvkDevice, 
+                                                            size,
+                                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        cvkVertUBStagingBuffer.DEBUGNAME = "CVKFPSRenderable.UpdateUniformBuffers cvkVertUBStagingBuffer";                           
+        ret = vkMapMemory(cvkDevice.GetDevice(), cvkVertUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
+        if (VkFailed(ret)) { return ret; }
+        {
+            vertexUBO.CopyTo(pData.getByteBuffer(0, size));
+        }
+        vkUnmapMemory(cvkDevice.GetDevice(), cvkVertUBStagingBuffer.GetMemoryBufferHandle());             
+
+        // Fill of the geometry uniform buffer
+        size = GeometryUniformBufferObject.SIZEOF;
+        CVKBuffer cvkGeomUBStagingBuffer = CVKBuffer.Create(cvkDevice, 
+                                                            size,
+                                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        cvkGeomUBStagingBuffer.DEBUGNAME = "CVKFPSRenderable.UpdateUniformBuffers cvkGeomUBStagingBuffer";  
+        ret = vkMapMemory(cvkDevice.GetDevice(), cvkGeomUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
+        if (VkFailed(ret)) { return ret; }
+        {
+            geometryUBO.CopyTo(pData.getByteBuffer(0, size));
+        }
+        vkUnmapMemory(cvkDevice.GetDevice(), cvkGeomUBStagingBuffer.GetMemoryBufferHandle());          
                 
         // Copy the UBOs in VK buffers we can bind to a descriptor set  
-        PointerBuffer pData = stack.mallocPointer(1);
         for (int i = 0; i < imageCount; ++i) {   
-            // Fill of the vertex uniform buffer
-            int size = VertexUniformBufferObject.SIZEOF;
-            CVKBuffer vertUniformBuffer = vertexUniformBuffers.get(i);                       
-            ret = vkMapMemory(cvkDevice.GetDevice(), vertUniformBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
-            if (VkFailed(ret)) { return ret; }
-            {
-                vertexUBO.CopyTo(pData.getByteBuffer(0, size));
-            }
-            vkUnmapMemory(cvkDevice.GetDevice(), vertUniformBuffer.GetMemoryBufferHandle());             
-            
-            // Fill of the geometry uniform buffer
-            size = GeometryUniformBufferObject.SIZEOF;
-            CVKBuffer geomUniformBuffer = geometryUniformBuffers.get(i);
-            ret = vkMapMemory(cvkDevice.GetDevice(), geomUniformBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
-            if (VkFailed(ret)) { return ret; }
-            {
-                geometryUBO.CopyTo(pData.getByteBuffer(0, size));
-            }
-            vkUnmapMemory(cvkDevice.GetDevice(), geomUniformBuffer.GetMemoryBufferHandle());                                              
+            vertexUniformBuffers.get(i).CopyFrom(cvkVertUBStagingBuffer);                       
+            geometryUniformBuffers.get(i).CopyFrom(cvkGeomUBStagingBuffer);                                           
         }
-        
+	cvkVertUBStagingBuffer.Destroy();
+        cvkGeomUBStagingBuffer.Destroy();
+
         return ret;
     }
     
@@ -549,7 +657,7 @@ public class CVKFPSRenderable extends CVKRenderable {
             int size = vertices.length * Vertex.SIZEOF;
             CVKBuffer cvkStagingBuffer = CVKBuffer.Create(cvkDevice, 
                                                           size,
-                                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             cvkStagingBuffer.DEBUGNAME = "CVKFPSRenderable cvkStagingBuffer";               
             PointerBuffer data = stack.mallocPointer(1);
@@ -743,6 +851,8 @@ public class CVKFPSRenderable extends CVKRenderable {
         int ret = VK_SUCCESS;
         
         if (pDescriptorSets != null) {
+            CVKLOGGER.info(String.format("CVKFPSRenderable returning %d descriptor sets to the pool", pDescriptorSets.capacity()));
+            
             // After calling vkFreeDescriptorSets, all descriptor sets in pDescriptorSets are invalid.
             ret = vkFreeDescriptorSets(cvkDevice.GetDevice(), cvkSwapChain.GetDescriptorPoolHandle(), pDescriptorSets);
             pDescriptorSets = null;
@@ -1130,114 +1240,19 @@ public class CVKFPSRenderable extends CVKRenderable {
         
         return ret; 
     }
-         
-    public static int LoadShaders(CVKDevice cvkDevice) {
-        int ret = VK_SUCCESS;
-        
-        try {
-            ByteBuffer vsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.vs.spv");
-            if (vsBytes.capacity() == 0) {
-                throw new RuntimeException("Failed to load compiled/SimpleIcon.vs.spv");
-            }
-            ByteBuffer gsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.gs.spv");
-            if (vsBytes.capacity() == 0) {
-                throw new RuntimeException("Failed to load compiled/SimpleIcon.gs.spv");
-            }            
-            ByteBuffer fsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/SimpleIcon.fs.spv");
-            if (vsBytes.capacity() == 0) {
-                throw new RuntimeException("Failed to load compiled/SimpleIcon.fs.spv");
-            }            
-            
-            hVertexShader = CVKShaderUtils.createShaderModule(vsBytes, cvkDevice.GetDevice());
-            if (hVertexShader == VK_NULL_HANDLE) {
-                throw new RuntimeException("Failed to create shader from SimpleIcon.vs.spv bytes");
-            }            
-            hGeometryShader = CVKShaderUtils.createShaderModule(gsBytes, cvkDevice.GetDevice());
-            if (hGeometryShader == VK_NULL_HANDLE) {
-                throw new RuntimeException("Failed to create shader from SimpleIcon.gs.spv bytes");
-            }             
-            hFragmentShader = CVKShaderUtils.createShaderModule(fsBytes, cvkDevice.GetDevice());            
-            if (hFragmentShader == VK_NULL_HANDLE) {
-                throw new RuntimeException("Failed to create shader from SimpleIcon.fs.spv bytes");
-            }      
-            
-            MemoryUtil.memFree(vsBytes);
-            MemoryUtil.memFree(gsBytes);
-            MemoryUtil.memFree(fsBytes);
-        } catch (IOException e) {
-            //TODO_TT
-        }
-        
-        return ret;
-    }
-    
-    
-    public static int CreateDescriptorLayout(CVKDevice cvkDevice) {
-        int ret;
-        
-        try(MemoryStack stack = stackPush()) {
-            /*
-            Vertex shader needs a uniform buffer.
-            Geometry shader needs a different uniform buffer.
-            Fragment shader needs a sampler2Darray
-            */
+           
 
-            VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.callocStack(3, stack);
+    private void DebugUpdateFPS() {
 
-            VkDescriptorSetLayoutBinding vertexUBOLayout = bindings.get(0);
-            vertexUBOLayout.binding(0);
-            vertexUBOLayout.descriptorCount(1);
-            vertexUBOLayout.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-            vertexUBOLayout.pImmutableSamplers(null);
-            vertexUBOLayout.stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            
-            VkDescriptorSetLayoutBinding geomUBOLayout = bindings.get(1);
-            geomUBOLayout.binding(1);
-            geomUBOLayout.descriptorCount(1);
-            geomUBOLayout.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-            geomUBOLayout.pImmutableSamplers(null);
-            geomUBOLayout.stageFlags(VK_SHADER_STAGE_GEOMETRY_BIT);            
-
-            VkDescriptorSetLayoutBinding samplerLayoutBinding = bindings.get(2);
-            samplerLayoutBinding.binding(2);
-            samplerLayoutBinding.descriptorCount(1);
-            samplerLayoutBinding.descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            samplerLayoutBinding.pImmutableSamplers(null);
-            samplerLayoutBinding.stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT);
-
-            VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.callocStack(stack);
-            layoutInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-            layoutInfo.pBindings(bindings);
-
-            LongBuffer pDescriptorSetLayout = stack.mallocLong(1);
-
-            ret = vkCreateDescriptorSetLayout(cvkDevice.GetDevice(), layoutInfo, null, pDescriptorSetLayout);
-            if (VkSucceeded(ret)) {
-                hDescriptorLayout = pDescriptorSetLayout.get(0);
-            }
-        }        
-        return ret;
-    }
-    
-    
-    static int counter = 0;
-    private int DebugUpdateFPS(){
-        int ret = VK_SUCCESS;
-        
-        counter++;
-        
         // Debug code to update every 100 frames
-        if (counter % 100 != 0)
-            return ret;
+        if (++counter % 20 != 0) { return; }
 
         currentFPS.set(0, GetRandom(0,9));
         currentFPS.set(1, GetRandom(0,9));
         currentFPS.set(2, GetRandom(10, parent.GetTextureAtlas().GetAtlasIconCount()));
-        currentFPS.set(3, GetRandom(10, parent.GetTextureAtlas().GetAtlasIconCount()));
-        
+        currentFPS.set(3, GetRandom(10, parent.GetTextureAtlas().GetAtlasIconCount()));       
         needsDisplayUpdate = true;
-        
-        return ret;
+
     }
     
     private int GetRandom(int min, int max){
@@ -1245,54 +1260,68 @@ public class CVKFPSRenderable extends CVKRenderable {
     }
     
     @Override
-    public void IncrementDescriptorTypeRequirements(int descriptorTypeCounts[], int descriptorSetCount) {
-        CVKAssert(descriptorTypeCounts.length == (VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT + 1));
+    public void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs) {
         // SimpleIcon.vs
-        ++descriptorTypeCounts[VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER];
+        ++perImageReqs.poolDescriptorTypeCounts[VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER];
         // SimpleIcon.gs
-        ++descriptorTypeCounts[VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER];
+        ++perImageReqs.poolDescriptorTypeCounts[VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER];
         // SimpleIcon.fs
-        ++descriptorTypeCounts[VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER];
+        ++perImageReqs.poolDescriptorTypeCounts[VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER];
         
-        // One descriptor set is required
-        ++descriptorSetCount;
+        // One set per image
+        ++perImageReqs.poolDesciptorSetCount;
     } 
     
     @Override
-    public int DeviceInitialised(CVKDevice cvkDevice) {
+    public int Initialise(CVKDevice cvkDevice) {
         this.cvkDevice = cvkDevice;
+        
+        if (hDescriptorLayout == VK_NULL_HANDLE) {
+            int ret = CreateDescriptorLayout(cvkDevice);
+            if (VkFailed(ret)) { return ret; }
+        }
+        
+        for (int digit = 0; digit < 10; ++digit) {
+            // Returns the index of the icon, not a success code
+            parent.GetTextureAtlas().AddIcon(Integer.toString(digit));
+        }
+        
         return VK_SUCCESS;
     }   
     
     @Override
     public boolean NeedsDisplayUpdate() { 
+        VerifyInRenderThread();               
+        
+        return true;
+    }
+    
+    @Override
+    public int DisplayUpdate() { 
+        int ret;
         VerifyInRenderThread();
         
         DebugUpdateFPS();
         
-        if (needsDisplayUpdate){
-            return true;
-        }
-        
-        return hAtlasSampler != parent.GetTextureAtlas().GetAtlasSamplerHandle() ||
-               hAtlasImageView != parent.GetTextureAtlas().GetAtlasImageViewHandle(); }
-    
-    @Override
-    public int DisplayUpdate() { 
-        VerifyInRenderThread();
-        
-        int ret;
-        ret = DestroyDescriptorSets();
-        if (VkFailed(ret)) {
-            return ret;
-        }
+        boolean atlasChanged =  hAtlasSampler != parent.GetTextureAtlas().GetAtlasSamplerHandle() ||
+                                hAtlasImageView != parent.GetTextureAtlas().GetAtlasImageViewHandle();        
+                
         try (MemoryStack stack = stackPush()) {
-            //TODO_TT: updating the descriptor sets is probably a better approach to recreation
-            ret = CreateDescriptorSets(stack);
-            if (VkFailed(ret)) {
-                return ret;
+            // We only need to update descriptors if the atlas has generated a new texture
+            if (atlasChanged) {
+                ret = DestroyDescriptorSets();
+                if (VkFailed(ret)) {
+                    return ret;
+                }
+        
+                //TODO_TT: updating the descriptor sets is probably a better approach to recreation
+                ret = CreateDescriptorSets(stack);
+                if (VkFailed(ret)) {
+                    return ret;
+                }
             }
             
+            // We update this constantly as the FPS changes constantly
             ret = UpdateVertexBuffers();
             if (VkFailed(ret)) {
                 return ret;
