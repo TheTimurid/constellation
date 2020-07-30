@@ -23,7 +23,6 @@ import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils.SPIRV;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils.ShaderKind.FRAGMENT_SHADER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils.ShaderKind.VERTEX_SHADER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils.compileShaderFile;
-import au.gov.asd.tac.constellation.visual.vulkan.CVKSwapChain;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import au.gov.asd.tac.constellation.visual.vulkan.shaders.CVKShaderPlaceHolder;
 import java.nio.ByteBuffer;
@@ -80,10 +79,8 @@ import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
 import org.lwjgl.vulkan.VkCommandBufferInheritanceInfo;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
-
 import au.gov.asd.tac.constellation.utilities.graphics.Vector3f;
 import au.gov.asd.tac.constellation.utilities.graphics.Vector4f;
-import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool.CVKDescriptorPoolRequirements;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils.ShaderKind.GEOMETRY_SHADER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
@@ -100,7 +97,6 @@ import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import static org.lwjgl.system.MemoryStack.stackPush;
-import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.system.MemoryUtil.memAlloc;
 import static org.lwjgl.system.MemoryUtil.memAllocInt;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -109,8 +105,6 @@ import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers;
 import static org.lwjgl.vulkan.VK10.vkMapMemory;
 import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
-import org.lwjgl.vulkan.VkDescriptorBufferInfo;
-import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkOffset2D;
@@ -120,7 +114,7 @@ import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkViewport;
 import org.lwjgl.vulkan.VkPushConstantRange;
-import org.lwjgl.vulkan.VkWriteDescriptorSet;
+
 
 public class CVKAxesRenderable extends CVKRenderable {
     // Static so we recreate descriptor layouts and shaders for each graph
@@ -166,10 +160,7 @@ public class CVKAxesRenderable extends CVKRenderable {
     private boolean needsDisplayUpdate = false;
     private boolean swapChainImageCountChanged = true;
 
-    
-    // WIP Push constants
     private ByteBuffer pushConstants = null;
-    private final int PUSH_CONSTANT_SIZE = 16 * Float.BYTES;
  
     
     // ========================> Classes <======================== \\    
@@ -396,7 +387,7 @@ public class CVKAxesRenderable extends CVKRenderable {
         this.cvkDevice = cvkDevice;
 
         // Initialise push constants to identity mtx
-        pushConstants = memAlloc(PUSH_CONSTANT_SIZE);
+        pushConstants = memAlloc(VertexUniformBufferObject.SIZEOF);
         for (int iRow = 0; iRow < 4; ++iRow) {
             for (int iCol = 0; iCol < 4; ++iCol) {
                 pushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
@@ -667,7 +658,7 @@ public class CVKAxesRenderable extends CVKRenderable {
     private void UpdatePushConstants(){
         CVKAssert(cvkSwapChain != null);
             
-        final int[] viewport = new int[]{0, cvkSwapChain.GetHeight(), cvkSwapChain.GetWidth(), -cvkSwapChain.GetHeight()};             
+        final int[] viewport = cvkSwapChain.GetViewport();             
         final int dx = cvkSwapChain.GetWidth() / 2 - AXES_OFFSET;
         final int dy = -cvkSwapChain.GetHeight() / 2 + AXES_OFFSET;
         pScale = CalculateProjectionScale(viewport);
@@ -694,7 +685,6 @@ public class CVKAxesRenderable extends CVKRenderable {
         vertexUBO.mvpMatrix.multiply(translationMatrix, srMatrix);
         
         // Update the push constants data
-        pushConstants.clear();
         vertexUBO.CopyTo(pushConstants);
         pushConstants.flip();
         
@@ -735,7 +725,7 @@ public class CVKAxesRenderable extends CVKRenderable {
         
         try (MemoryStack stack = stackPush()) {
               
-            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc();
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
             beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
             beginInfo.pNext(0);
             beginInfo.flags(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT);  // hard coding this for now
@@ -785,8 +775,6 @@ public class CVKAxesRenderable extends CVKRenderable {
             
             ret = vkEndCommandBuffer(commandBuffer);
             checkVKret(ret);
-
-            beginInfo.free();
         }
         return ret;
     }
@@ -810,25 +798,12 @@ public class CVKAxesRenderable extends CVKRenderable {
     
     @Override
     public void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs) {
-        // PassThru.vs
-        //++perImageReqs.poolDescriptorTypeCounts[VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER];
-        
-        // One set per image
-        //++perImageReqs.poolDesciptorSetCount;        
+        // No descriptor sets required because axes use push constants instead of descriptor bound uniform buffers.
     }
-        
-    private int DestroyDescriptorSets(){
-        int ret = VK_SUCCESS;
-
-        return ret;
-    }    
-    
+  
     @Override
-    public int DestroyDescriptorPoolResources() { 
-        int ret = VK_SUCCESS;
-        
-        
-        return ret; 
+    public int DestroyDescriptorPoolResources() {         
+        return VK_SUCCESS; 
     }       
     
     
@@ -957,16 +932,16 @@ public class CVKAxesRenderable extends CVKRenderable {
                 pDynamicStates.put(VK_DYNAMIC_STATE_SCISSOR);
                 pDynamicStates.flip();
 
-                VkPipelineDynamicStateCreateInfo dynamicState = VkPipelineDynamicStateCreateInfo.calloc();
+                VkPipelineDynamicStateCreateInfo dynamicState = VkPipelineDynamicStateCreateInfo.callocStack(stack);
                 dynamicState.sType(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
                 dynamicState.pDynamicStates(pDynamicStates);
 
-                // ===>PUSH CONSTANTS <===
+                // ===> PUSH CONSTANTS <===
                 VkPushConstantRange.Buffer pushConstantRange;
-                pushConstantRange = VkPushConstantRange.calloc(1);
-		pushConstantRange.stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-		pushConstantRange.size(PUSH_CONSTANT_SIZE);
-		pushConstantRange.offset(0);
+                pushConstantRange = VkPushConstantRange.callocStack(1, stack);
+	        pushConstantRange.stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
+	        pushConstantRange.size(VertexUniformBufferObject.SIZEOF);
+	        pushConstantRange.offset(0);
 
                 // ===> PIPELINE LAYOUT CREATION <===                
                 VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(stack);
@@ -975,8 +950,9 @@ public class CVKAxesRenderable extends CVKRenderable {
                 // to describe the uniform data, however you do not need to create
                 // any DescriptorSets as we directly push the matrix data using vkCmdPushConstants()
                 // during the record stage.
+                // TODO HYDRA - CONFIRM THIS IS TRUE! May not need layout either
                 pipelineLayoutInfo.pSetLayouts(stack.longs(hDescriptorLayout));
-                pipelineLayoutInfo.pPushConstantRanges(pushConstantRange);                
+                pipelineLayoutInfo.pPushConstantRanges(pushConstantRange);
                 
                 LongBuffer pPipelineLayout = stack.longs(VK_NULL_HANDLE);
                 ret = vkCreatePipelineLayout(cvkDevice.GetDevice(), pipelineLayoutInfo, null, pPipelineLayout);
