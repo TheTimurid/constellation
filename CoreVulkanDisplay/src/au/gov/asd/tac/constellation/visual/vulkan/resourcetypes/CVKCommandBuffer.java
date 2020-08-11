@@ -85,7 +85,7 @@ public class CVKCommandBuffer {
     @SuppressWarnings("deprecation")
     @Override
     public void finalize() throws Throwable {	
-        //TODO remove the if, only here for debugging, its checked in Destroy()
+        //TODO remove the if, only here for CVK_DEBUGGING, its checked in Destroy()
         if (vkCommandBuffer != null) {
             Destroy();
         }
@@ -94,14 +94,14 @@ public class CVKCommandBuffer {
 
     public void Destroy(){        
         if (vkCommandBuffer != null) {
-            VerifyInRenderThread();
+            cvkDevice.VerifyInRenderThread();
             vkFreeCommandBuffers(cvkDevice.GetDevice(), cvkDevice.GetCommandPoolHandle(), vkCommandBuffer);
             vkCommandBuffer = null;
         }
     }
     
     public int Begin(int flags) {	
-        VerifyInRenderThread();
+        cvkDevice.VerifyInRenderThread();
         
         int ret;            
         try (MemoryStack stack = stackPush()) {
@@ -475,7 +475,6 @@ public class CVKCommandBuffer {
             PointerBuffer pCommandBuffer = stack.mallocPointer(1);
             ret = vkAllocateCommandBuffers(cvkDevice.GetDevice(), vkAllocateInfo, pCommandBuffer);
             checkVKret(ret);
-
 
             cvkCommandBuffer.vkCommandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), cvkDevice.GetDevice());
         }

@@ -19,6 +19,7 @@ import au.gov.asd.tac.constellation.graph.interaction.framework.HitState;
 import au.gov.asd.tac.constellation.graph.interaction.framework.HitState.HitType;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool.CVKDescriptorPoolRequirements;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDevice;
+import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKImage;
@@ -123,6 +124,10 @@ public class CVKHitTester extends CVKRenderable {
     
     
     // ========================> Lifetime <======================== \\
+    
+    public CVKHitTester(CVKVisualProcessor parent) {
+        this.parent = parent;
+    }
     
     @Override
     public int Initialise(CVKDevice cvkDevice) { 

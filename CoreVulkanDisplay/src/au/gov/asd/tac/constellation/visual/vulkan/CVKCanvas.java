@@ -6,10 +6,7 @@
 package au.gov.asd.tac.constellation.visual.vulkan;
 
 import java.awt.Graphics;
-import java.util.ArrayList;
-import java.util.EventListener;
 import org.lwjgl.vulkan.awt.AWTVKCanvas;
-
 import javax.swing.SwingUtilities;
 import org.lwjgl.vulkan.awt.VKData;
 
@@ -17,32 +14,26 @@ import org.lwjgl.vulkan.awt.VKData;
 
 public class CVKCanvas extends AWTVKCanvas{
     private boolean parentAdded = false;
-    int frameNo = 0;
-    protected long handle = 0;
+    private int frameNumber = 0;
+    private final CVKRenderer cvkRenderer;
     
-    protected final CVKRenderer vkRenderer;
-    protected ArrayList<EventListener> eventListeners = new ArrayList<>();
+    public int GetFrameNumber() { return frameNumber; }
     
-    public CVKCanvas(VKData vkData, CVKRenderer vkRenderer) {
+    public CVKCanvas(VKData vkData, CVKRenderer cvkRenderer) {
         super(vkData);
-        this.vkRenderer = vkRenderer;
-        this.addComponentListener(vkRenderer);
+        cvkRenderer.Logger().fine("Canvas constructed");        
+        this.cvkRenderer = cvkRenderer;
+        this.addComponentListener(cvkRenderer);
     }
-   
-
+  
     public void Destroy() {
-        this.removeComponentListener(vkRenderer);
+        cvkRenderer.Logger().fine("Canvas destroyed"); 
+        this.removeComponentListener(cvkRenderer);
     }
-    
     
     public void InitSurface() {
-        //super.paint(null);
+        cvkRenderer.Logger().fine("Canvas InitSurface"); 
         parentAdded = true;
-    }
-    
-    public void addEventListener(EventListener listener) {
-        // TODO_TT: eventify this
-        eventListeners.add(listener);
     }
     
     @Override
@@ -64,6 +55,7 @@ public class CVKCanvas extends AWTVKCanvas{
     */
     @Override
     public boolean requestFocusInWindow() {
+        cvkRenderer.Logger().fine("Canvas requestFocusInWindow"); 
         boolean ret = super.requestFocusInWindow();
         parentAdded = true;
         return ret;
@@ -71,7 +63,8 @@ public class CVKCanvas extends AWTVKCanvas{
     
     @Override
     public void initVK() {
-        vkRenderer.Initialise(this.surface);
+        cvkRenderer.Logger().fine("Canvas initVK"); 
+        cvkRenderer.Initialise(this.surface);
     }
     
     @Override
@@ -79,17 +72,16 @@ public class CVKCanvas extends AWTVKCanvas{
         // This will be called by AWTVKCanvas during initialisation but before
         // CVKRenderer is ready to use.  platformCanvas is private in our parent 
         // so this is the only way to complete the surface initialisation.  
-        System.out.printf("Frame %d\n", ++frameNo);       
-        vkRenderer.Display();
+        ++frameNumber;       
+        cvkRenderer.Display();
     }
     
     @Override
     public void repaint() {
         if (SwingUtilities.isEventDispatchThread()) {
-                paintVK();
+            paintVK();
         } else {
-                SwingUtilities.invokeLater(() -> paintVK());
+            SwingUtilities.invokeLater(() -> paintVK());
         }
     }
-
 }

@@ -21,6 +21,7 @@ import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.List;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.system.MemoryStack.stackPush;
@@ -45,6 +46,8 @@ import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_DEBUGGING;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_VKALLOCATIONS;
 
 public class CVKBuffer {
     final static int COPY_SIZE = 4096; //candidate for profiling
@@ -155,6 +158,41 @@ public class CVKBuffer {
         pWriteMemory = null;
     }
     
+    public static class DEBUG_CVKBufferElementDescriptor {
+        public final String label;
+        public final Class<?> type;
+        public DEBUG_CVKBufferElementDescriptor(String inLabel, Class<?> inType) {
+            label = inLabel;
+            type = inType;
+        }
+    }
+    public void DEBUGPRINT(List<DEBUG_CVKBufferElementDescriptor> typeDescriptors) {
+        ByteBuffer pData = StartWrite(0, (int)bufferSize);
+        
+        cvkDevice.Logger().info("\n");
+        cvkDevice.Logger().info(String.format("Contents of %s:", DEBUGNAME));
+        int idx = 0;
+        while (pData.hasRemaining()) {
+            for (DEBUG_CVKBufferElementDescriptor desc : typeDescriptors) {
+                if (desc.type == Float.TYPE) {  
+                    final float f = pData.getFloat();
+                    cvkDevice.Logger().info(String.format("\tidx %d\t%s:\t%f", idx, desc.label, f));
+                } else if (desc.type == Integer.TYPE) {
+                    final int d = pData.getInt();
+                    cvkDevice.Logger().info(String.format("\tidx %d\t%s:\t%d", idx, desc.label, d));
+                }else {
+                    cvkDevice.Logger().info(String.format("CVKBuffer.DEBUGPRINT cannot handle type <%s>", desc.type.getName()));
+                    break;
+                }
+            }
+            ++idx;
+        }
+        
+        cvkDevice.Logger().info("\n");
+        
+        EndWrite();
+    }
+    
     /**
      * java.nio.ByteBuffer and their like are unpooled heap buffers unlike DirectByteBuffer
      * and HeapByteBuffer.  The pooled buffers are zeroed by the JVM, the nio buffers on the
@@ -173,6 +211,15 @@ public class CVKBuffer {
     }
     
     public void Destroy() {
+        if (CVK_DEBUGGING && pBuffer != null) {
+            if (pBufferMemory != null && pBufferMemory.get(0) != VK_NULL_HANDLE) {
+                --CVK_VKALLOCATIONS;
+                cvkDevice.Logger().info(String.format("CVK_VKALLOCATIONS (%d-) Destroy called on CVKBuffer (0x%016X), vkFreeMemory will be called", CVK_VKALLOCATIONS, pBuffer.get(0)));
+            } else {
+                
+                cvkDevice.Logger().info(String.format("CVK_VKALLOCATIONS (%d!) Destroy called on CVKBuffer (0x%016X), vkFreeMemory will NOT be called", CVK_VKALLOCATIONS, pBuffer.get(0)));
+            }            
+        }
         if (pBuffer != null && pBuffer.get(0) != VK_NULL_HANDLE) {
             vkDestroyBuffer(cvkDevice.GetDevice(), pBuffer.get(0), null);
             pBuffer.put(0, VK_NULL_HANDLE);
@@ -184,7 +231,7 @@ public class CVKBuffer {
             pBufferMemory.put(0, VK_NULL_HANDLE);
             MemoryUtil.memFree(pBufferMemory);
             pBufferMemory = null;            
-        }        
+        }
     }
     
     @SuppressWarnings("deprecation")
@@ -194,6 +241,15 @@ public class CVKBuffer {
         super.finalize();
     }
     
+    /**
+     * Factory creation method for CVKBuffers
+     * 
+     * @param cvkDevice
+     * @param size
+     * @param usage
+     * @param properties
+     * @return
+     */    
     /**
      * Factory creation method for CVKBuffers
      * 
@@ -234,18 +290,22 @@ public class CVKBuffer {
             checkVKret(ret);
             
             // Calculate memory requirements based on the info we proved to the bufferInfo struct
-            VkMemoryRequirements vkMemRequirements = VkMemoryRequirements.mallocStack(stack);
-            vkGetBufferMemoryRequirements(cvkDevice.GetDevice(), cvkBuffer.pBuffer.get(0), vkMemRequirements);
+            VkMemoryRequirements vkMemoryRequirements = VkMemoryRequirements.mallocStack(stack);
+            vkGetBufferMemoryRequirements(cvkDevice.GetDevice(), cvkBuffer.pBuffer.get(0), vkMemoryRequirements);
 
             // Allocation info struct, type index needs a little logic as types can be mapped differently between GPUs
-            VkMemoryAllocateInfo vkAllocInfo = VkMemoryAllocateInfo.callocStack(stack);
-            vkAllocInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
-            vkAllocInfo.allocationSize(vkMemRequirements.size());
-            vkAllocInfo.memoryTypeIndex(cvkDevice.GetMemoryType(vkMemRequirements.memoryTypeBits(), properties));
+            VkMemoryAllocateInfo vkAllocationInfo = VkMemoryAllocateInfo.callocStack(stack);
+            vkAllocationInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+            vkAllocationInfo.allocationSize(vkMemoryRequirements.size());
+            vkAllocationInfo.memoryTypeIndex(cvkDevice.GetMemoryType(vkMemoryRequirements.memoryTypeBits(), properties));
 
             // Allocate the memory needed for the buffer (still needs to be bound)
-            ret = vkAllocateMemory(cvkDevice.GetDevice(), vkAllocInfo, null, cvkBuffer.pBufferMemory);
+            ret = vkAllocateMemory(cvkDevice.GetDevice(), vkAllocationInfo, null, cvkBuffer.pBufferMemory);
             checkVKret(ret);
+            ++CVK_VKALLOCATIONS;
+            cvkDevice.Logger().info(String.format("CVK_VKALLOCATIONS(%d+) vkAllocateMemory(%d) for CVKBuffer (0x%016X)", 
+                    CVK_VKALLOCATIONS, vkMemoryRequirements.size(), cvkBuffer.pBuffer.get(0)));
+            //LogStackTrace();
 
             // We have a pen, we have a apple, we have a pineapple...err bind the buffer to its memory
             ret = vkBindBufferMemory(cvkDevice.GetDevice(), 
