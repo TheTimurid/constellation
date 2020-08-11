@@ -156,7 +156,7 @@ public class CVKSwapChain {
     public long GetFrameBufferHandle(int imageIndex) { return framebufferHandles.get(imageIndex); }
     public VkCommandBuffer GetCommandBuffer(int imageIndex) { return commandBuffers.get(imageIndex); }
     public long GetFence(int imageIndex) { return renderFenceHandles.get(imageIndex); }
-    
+    public int GetDepthFormat() { return depthFormat; }
     
     public CVKSwapChain(CVKDevice device) {
         cvkDevice = device;
@@ -360,8 +360,8 @@ public class CVKSwapChain {
             }
         }
         if (depthFormat == VK_FORMAT_UNDEFINED) {
-            CVKLOGGER.severe("Failed to find supported detpth format");
-            throw new RuntimeException("Failed to find supported detpth format");
+            CVKLOGGER.severe("Failed to find supported depth format");
+            throw new RuntimeException("Failed to find supported depth format");
         }
         
         // Depth attachment.  It has:

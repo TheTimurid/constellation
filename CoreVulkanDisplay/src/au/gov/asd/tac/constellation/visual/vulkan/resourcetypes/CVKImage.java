@@ -23,7 +23,6 @@ import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERRO
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_INVALID_ARGS;
 import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
-import static org.lwjgl.system.MemoryStack.stackPush;
 import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -77,12 +76,25 @@ import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_INVALID_IMAGE;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKFormatUtils.VkFormatByteDepth;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkSucceeded;
+import java.awt.image.BufferedImage;
+import static java.awt.image.BufferedImage.TYPE_INT_RGB;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.IntBuffer;
+import java.nio.channels.FileChannel;
+import javax.imageio.ImageIO;       // TODO make sure this import is ok from javax
+import org.lwjgl.PointerBuffer;
+import static org.lwjgl.system.MemoryStack.stackPush;
+import static org.lwjgl.vulkan.VK10.vkMapMemory;
+import static org.lwjgl.vulkan.VK10.vkUnmapMemory;
 
 public class CVKImage {
     private CVKDevice cvkDevice     = null;
@@ -466,4 +478,73 @@ public class CVKImage {
         
         return null;
     }
+    
+    
+    /**
+     * 
+     * @param filename
+     * @return errorCode
+     */
+    public int SaveToFile(String filename) {
+        int ret;
+
+        BufferedImage out = null;
+        File file = new File(filename);
+        
+        try (MemoryStack stack = stackPush()) {
+            
+            PointerBuffer pWriteMemory = stack.mallocPointer(1);
+            // TODO calc format size
+            int size = width * height * 4;  /// rgba
+            int sizeRGB = width * height * 3;  /// rgb
+
+            ret = vkMapMemory(cvkDevice.GetDevice(), GetMemoryImageHandle(), 0, size, 0, pWriteMemory);
+            if (VkFailed(ret)) { return ret; }
+           
+            try {
+                out = new BufferedImage(width, height, TYPE_INT_RGB);
+                int[] rgb = new int[sizeRGB];
+                int i = 0;
+                //int r = 0;  // causing mem access violation
+                
+                IntBuffer row = pWriteMemory.getIntBuffer(0, size);
+                for (int y = 0; y < height; y++)
+                {
+                    //int rowSize = 4 * width;
+                    //int colIndex = y * rowSize;
+                    int r = 0;
+                    
+                   // IntBuffer row = pWriteMemory.getIntBuffer(colIndex, rowSize);
+                    for (int x = 0; x < width; x++)
+                    {
+                        // TODO: tests to see if we need to swizzle the rgb channels
+                        //IntBuffer row = pWriteMemory.getIntBuffer(y, 4);
+                        rgb[i++] = row.get(r++);        // red
+                        rgb[i++] = row.get(r++);        // green
+                        rgb[i++] = row.get(r++);        // blue
+                        r++; // skip the alpha
+                    }
+                }
+                out.setRGB(0, 0, width, height, rgb, 0, width);
+                ImageIO.write(out, "png", file);
+            }
+            catch (Exception e) {
+                System.err.println("Error: " + e.getMessage());
+            }
+            finally {
+                // close the streams using close method
+//                try {
+//                    if(out != null) {
+//                       //out.close();
+//                    }
+//                }
+//                catch (IOException ioe) {
+//                    System.out.println("Error while closing stream: " + ioe);
+//                }
+            }
+            vkUnmapMemory(cvkDevice.GetDevice(), GetMemoryImageHandle());
+        }    
+        return ret;
+    }
+
 }

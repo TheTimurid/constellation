@@ -422,10 +422,6 @@ public class CVKAxesRenderable extends CVKRenderable {
     
     // ========================> Swap chain <======================== \\
     
-    /**
-    * Called just before the swapchain is about to be destroyed allowing the
-    * object to cleanup its resources.
-    */
     private int CreateSwapChainResources() {
         VerifyInRenderThread();
         CVKAssert(cvkSwapChain != null);
@@ -623,6 +619,7 @@ public class CVKAxesRenderable extends CVKRenderable {
 
         PointerBuffer data = stack.mallocPointer(1);
         vkMapMemory(cvkDevice.GetDevice(), cvkStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, data);
+        if (VkFailed(ret)) { return ret; }
         {
             Vertex.CopyTo(data.getByteBuffer(0, size), vertices);
         }
@@ -724,36 +721,18 @@ public class CVKAxesRenderable extends CVKRenderable {
         int ret = VK_SUCCESS;
         
         try (MemoryStack stack = stackPush()) {
-              
-            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
-            beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
-            beginInfo.pNext(0);
-            beginInfo.flags(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT);  // hard coding this for now
-            beginInfo.pInheritanceInfo(inheritanceInfo);     
-
+            
             VkCommandBuffer commandBuffer = commandBuffers.get(index).GetVKCommandBuffer();
             CVKAssert(commandBuffer != null);
             CVKAssert(pipelines.get(index) != null);
-         
-            ret = vkBeginCommandBuffer(commandBuffer, beginInfo);
-            checkVKret(ret);    
-
-	    // Set the dynamic viewport and scissor
-            VkViewport.Buffer viewport = VkViewport.callocStack(1, stack);
-            viewport.x(0.0f);
-            viewport.y(0.0f);
-            viewport.width(cvkSwapChain.GetWidth());
-            viewport.height(cvkSwapChain.GetHeight());
-            viewport.minDepth(0.0f);
-            viewport.maxDepth(1.0f);
-
-            VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
-            scissor.offset(VkOffset2D.callocStack(stack).set(0, 0));
-            scissor.extent(cvkDevice.GetCurrentSurfaceExtent());
-
-            vkCmdSetViewport(commandBuffer, 0, viewport);           
-            vkCmdSetScissor(commandBuffer, 0, scissor);
             
+            commandBuffers.get(index).BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
+                                                           inheritanceInfo);
+            
+            // Set the dynamic viewport and scissor
+            commandBuffers.get(index).viewPortCmd(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), stack);
+            commandBuffers.get(index).scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
+                        
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.get(index));
 
             // We only use 1 vertBuffer here as the verts are fixed the entire lifetime of the object

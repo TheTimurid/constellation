@@ -24,6 +24,7 @@ import org.lwjgl.vulkan.VkCommandBufferInheritanceInfo;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
+import java.util.List;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 
 public abstract class CVKRenderable {
@@ -139,6 +140,7 @@ public abstract class CVKRenderable {
     
     public abstract void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs);
     public abstract int RecordCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index);
+    public int OffscreenRender(List<CVKRenderable> hitTestRenderables){ return VK_SUCCESS; }
 
     /*
         Returns the number of vertices used in the vertex buffer

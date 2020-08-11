@@ -997,5 +997,12 @@ public class CVKVisualProcessor extends VisualProcessor {
         // Create the projection matrix, and load it on the projection matrix stack.
         viewFrustum.setPerspective(FIELD_OF_VIEW, (float) dpiScaledWidth / (float) dpiScaledHeight, PERSPECTIVE_NEAR, PERSPECTIVE_FAR);        
         projectionMatrix.set(viewFrustum.getProjectionMatrix());
-    }    
+    } 
+    
+    public List<CVKRenderable> GetHitTesterList() {
+        // TODO Cache me
+        List<CVKRenderable> hitTesters = new ArrayList<>();
+        hitTesters.add(cvkAxes);
+        return hitTesters;
+    }
 }

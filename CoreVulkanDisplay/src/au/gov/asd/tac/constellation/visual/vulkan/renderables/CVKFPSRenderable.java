@@ -53,6 +53,7 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.system.MemoryUtil.memAlloc;
 import static org.lwjgl.system.MemoryUtil.memAllocInt;
+import static org.lwjgl.system.MemoryUtil.memFree;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
@@ -503,7 +504,7 @@ public class CVKFPSRenderable extends CVKRenderable {
         }
         
         // Initialise push constants buffers
-        vertexPushConstants = memAlloc(VertexUniformBufferObject.SIZEOF);
+        CreatePushConstants();
          
         return ret;
     }
@@ -516,7 +517,8 @@ public class CVKFPSRenderable extends CVKRenderable {
         DestroyCommandBuffers();
         DestroyPipelines();
         DestroyPipelineLayouts();
-        DestroyCommandBuffers();  
+        DestroyCommandBuffers(); 
+        DestroyPushConstants();
         
         CVKAssert(pipelines == null);
         CVKAssert(pipelineLayouts == null);
@@ -524,6 +526,7 @@ public class CVKFPSRenderable extends CVKRenderable {
         CVKAssert(geometryUniformBuffers == null);
         CVKAssert(vertexBuffers == null);
         CVKAssert(commandBuffers == null);
+        CVKAssert(vertexPushConstants == null);
     }     
     
     
@@ -819,6 +822,29 @@ public class CVKFPSRenderable extends CVKRenderable {
     }
     
     
+    // ========================> Push constants <======================== \\
+    private void CreatePushConstants() {
+        // Initialise push constants to identity mtx
+        vertexPushConstants = memAlloc(VertexUniformBufferObject.SIZEOF);
+        for (int iRow = 0; iRow < 4; ++iRow) {
+            for (int iCol = 0; iCol < 4; ++iCol) {
+                vertexPushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
+            }
+        }
+        vertexPushConstants.putFloat(0.0f);
+        vertexPushConstants.putFloat(1.0f);
+        vertexPushConstants.flip();       
+    }
+
+        
+    private void DestroyPushConstants() {
+        if (vertexPushConstants != null) {
+            memFree(vertexPushConstants);
+            vertexPushConstants = null;
+        }
+    }
+    
+    
     // ========================> Command buffers <======================== \\
     
     public int CreateCommandBuffers(){
@@ -869,21 +895,9 @@ public class CVKFPSRenderable extends CVKRenderable {
             checkVKret(ret);
             
 	    // Set the dynamic viewport and scissor
-            VkViewport.Buffer viewport = VkViewport.callocStack(1, stack);
-            viewport.x(0.0f);
-            viewport.y(0.0f);
-            viewport.width(cvkSwapChain.GetWidth());
-            viewport.height(cvkSwapChain.GetHeight());
-            viewport.minDepth(0.0f);
-            viewport.maxDepth(1.0f);
-
-            VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
-            scissor.offset(VkOffset2D.callocStack(stack).set(0, 0));
-            scissor.extent(cvkDevice.GetCurrentSurfaceExtent());
-
-            vkCmdSetViewport(commandBuffer, 0, viewport);
-            vkCmdSetScissor(commandBuffer, 0, scissor);
-            
+            commandBuffers.get(index).viewPortCmd(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), stack);
+            commandBuffers.get(index).scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
+                        
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.get(index));
 
             LongBuffer pVertexBuffers = stack.longs(vertexBuffers.get(index).GetBufferHandle());
@@ -901,12 +915,8 @@ public class CVKFPSRenderable extends CVKRenderable {
                                     null);
             
             // Push vars to vertex shader
-            vkCmdPushConstants(commandBuffer,               // The buffer to push the matrix to
-				pipelineLayouts.get(index), // The pipeline layout
-				VK_SHADER_STAGE_VERTEX_BIT, // Flags
-				0,                          // Offset
-				vertexPushConstants);       // Matrix buffer
-            
+            commandBuffers.get(index).pushConstantsCmd(pipelineLayouts.get(index), VK_SHADER_STAGE_VERTEX_BIT, vertexPushConstants);
+           
             vkCmdDraw(commandBuffer,
                       GetVertexCount(),  //number of verts == number of digits
                       1,  //no instancing, but we must draw at least 1 point
