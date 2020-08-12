@@ -50,6 +50,7 @@ import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import static org.lwjgl.vulkan.KHRSwapchain.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_DEBUGGING;
+import java.io.File;
 
 
 /*
@@ -101,6 +102,8 @@ public class CVKRenderer implements ComponentListener {
     private float clrChange = 0.01f;
     private int curClrEl = 0;
     private Vector3f clr = new Vector3f(0.0f, 0.0f, 0.0f);
+    private boolean requestScreenshot = false;
+    private File requestScreenshotFile = null;
     
     public CVKGraphLogger Logger() { return parent.cvkLogger; }
     
@@ -119,6 +122,16 @@ public class CVKRenderer implements ComponentListener {
         if (renderables != null) {
             renderables.forEach(el -> {el.Destroy();});
             renderables = null;
+        }
+        
+        if (cvkSwapChain != null) {
+            cvkSwapChain.Destroy();
+            cvkSwapChain = null;
+        }
+        
+        if (cvkDescriptorPool != null) {
+            cvkDescriptorPool.Destroy();
+            cvkDescriptorPool = null;
         }
 
         if (cvkDevice != null) {
@@ -666,11 +679,18 @@ public class CVKRenderer implements ComponentListener {
                     List<CVKRenderable> hitTestRenderables = parent.GetHitTesterList();
                     renderables.forEach(r->{ r.OffscreenRender(hitTestRenderables); });
         
+                    if (requestScreenshot) {
+                        cvkSwapChain.GetImage(imageIndex).SaveToFile(requestScreenshotFile);
+                        requestScreenshot = false;
+                        requestScreenshotFile = null;
+                    }
+                    
                     // Move the frame index to the next cab off the rank
                     currentFrame = (++currentFrame) % cvkSwapChain.GetImageCount();                  
                 }
             }
-        }        
+        }
+        
         
         // We'll need another frame to recreate the swapchain.  swapChainNeedsRecreation
         // can be set if submitting an image to the render queue returned suboptimal or out of date.
@@ -681,6 +701,20 @@ public class CVKRenderer implements ComponentListener {
         parent.cvkLogger.info("** DISPLAY END **");
         // The visual processor will not trigger any more updates until this is signalled
         parent.signalProcessorIdle();
+    }
+    
+    
+    /**
+     * @param file to save the screenshot to
+     */
+    public CVKRenderUpdateTask TaskRequestScreenshot(File file) {
+        //=== EXECUTED BY CALLING THREAD (VisualProcessor) ===//
+        requestScreenshot = true;
+        requestScreenshotFile = file;
+        
+        //=== EXECUTED BY RENDER THREAD (during CVKVisualProcessor.ProcessRenderTasks) ===//
+        return () -> {
+        };
     }
 
     

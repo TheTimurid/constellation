@@ -52,6 +52,9 @@ public class CVKUtils {
     public static final int CVK_ERROR_INVALID_IMAGE                             = 0xFFFF0003;
     public static final int CVK_ERROR_SHADER_COMPILATION                        = 0xFFFF0004;
     public static final int CVK_ERROR_SHADER_MODULE                             = 0xFFFF0005;
+    public static final int CVK_ERROR_OUT_OF_MEMORY                             = 0xFFFF0006;
+    public static final int CVK_ERROR_IMAGE_VIEW_CREATION_FAILED                = 0xFFFF0007;
+    public static final int CVK_ERROR_SAVE_TO_FILE_FAILED                       = 0xFFFF0008;
     
     // Logger shared by all of Constellation's Vulkan classes with a minimal formatter
     // as a proxy for the IDE's console window (as prints to stdout aren't appearing).

@@ -23,10 +23,9 @@ import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKImage;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger.CVKLOGGER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKMissingEnums.VkFormat.VK_FORMAT_NONE;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKLOGGER;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VerifyInRenderThread;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkSucceeded;
 import java.nio.LongBuffer;
@@ -60,6 +59,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
@@ -76,6 +76,7 @@ import static org.lwjgl.vulkan.VK10.VK_SUBPASS_EXTERNAL;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkCmdBeginRenderPass;
 import static org.lwjgl.vulkan.VK10.vkCmdEndRenderPass;
+import static org.lwjgl.vulkan.VK10.vkCmdExecuteCommands;
 import static org.lwjgl.vulkan.VK10.vkCreateFramebuffer;
 import static org.lwjgl.vulkan.VK10.vkCreateRenderPass;
 import static org.lwjgl.vulkan.VK10.vkDestroyFramebuffer;
@@ -111,13 +112,13 @@ public class CVKHitTester extends CVKRenderable {
     private HitTestRequest hitTestRequest;
     private final BlockingDeque<HitTestRequest> requestQueue = new LinkedBlockingDeque<>();
     private final Queue<Queue<HitState>> notificationQueues = new LinkedList<>();
-    private boolean needsDisplayUpdate = false;
+    private boolean needsDisplayUpdate = true;
     private CVKImage cvkImage = null;
     private CVKImage cvkDepthImage = null;
     private Long vkFrameBufferHandle = null;
     private CVKCommandBuffer commandBuffer = null;
-    private long hOffscreenRenderPassHandle = VK_NULL_HANDLE;
-    private int colorFormat = VK_FORMAT_R8G8B8A8_UINT;
+    // TODO Use swapchain image format?
+    //private int colorFormat = VK_FORMAT_R8G8B8A8_UINT;
 
     // ========================> Static init <======================== \\
     
@@ -161,7 +162,7 @@ public class CVKHitTester extends CVKRenderable {
     protected int DestroySwapChainResources() { return VK_SUCCESS; }
     
     private int CreateSwapChainResources() {
-        VerifyInRenderThread();
+        parent.VerifyInRenderThread();
         CVKAssert(cvkSwapChain != null);
         int ret = VK_SUCCESS;
 
@@ -170,20 +171,19 @@ public class CVKHitTester extends CVKRenderable {
         // the swapchain changes or if this is the first call after the initial
         // swapchain is created.
         if (swapChainImageCountChanged) {
-            try (MemoryStack stack = stackPush()) {
 
-                ret = CreateRenderPass();
-                if (VkFailed(ret)) { return ret; }   
+//            ret = CreateRenderPass();
+//            if (VkFailed(ret)) { return ret; }   
 
-                ret = CreateImages();
-                if (VkFailed(ret)) { return ret; }            
+            ret = CreateImages();
+            if (VkFailed(ret)) { return ret; }            
 
-                ret = CreateFrameBuffer();
-                if (VkFailed(ret)) { return ret; }
-                
-                 ret = CreateCommandBuffer();
-                if (VkFailed(ret)) { return ret; }
-            }      
+            ret = CreateFrameBuffer();
+            if (VkFailed(ret)) { return ret; }
+
+             ret = CreateCommandBuffer();
+            if (VkFailed(ret)) { return ret; }
+            
         } else {
             // This is the resize path, image count is unchanged.       
             //UpdatePushConstants();
@@ -215,7 +215,9 @@ public class CVKHitTester extends CVKRenderable {
                                             textureWidth, 
                                             textureHeight, 
                                             requiredLayers, 
-                                            colorFormat, // Format TODO Not sure what the format should be - look at GL version
+                                            //colorFormat, // Format TODO Not sure what the format should be - look at GL version
+                                            cvkSwapChain.GetColorFormat(),
+                                            VK_IMAGE_VIEW_TYPE_2D,
                                             VK_IMAGE_TILING_LINEAR, // Tiling
                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, // TODO Usage 
                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT , // TODO - properties?
@@ -226,17 +228,12 @@ public class CVKHitTester extends CVKRenderable {
             }
             
             // Create depth image 
-            
-            // Find a suitable depth format
-//	    VkFormat fbDepthFormat;
-//	    VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &fbDepthFormat);
-//	    assert(validDepthFormat);
-
             cvkDepthImage = CVKImage.Create(cvkDevice, 
                                             textureWidth, 
                                             textureHeight, 
                                             requiredLayers, 
                                             cvkSwapChain.GetDepthFormat(), // Format TODO Not sure what the format should be - look at GL version
+                                            VK_IMAGE_VIEW_TYPE_2D,
                                             VK_IMAGE_TILING_OPTIMAL, // Tiling or VK_IMAGE_TILING_OPTIMAL
                                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, // TODO Usage 
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // TODO - properties?
@@ -334,21 +331,15 @@ public class CVKHitTester extends CVKRenderable {
     
     private int CreateFrameBuffer() {
         int ret = VK_SUCCESS;
-        
-//	VkFramebuffer framebufferSource;
-//	VkFramebufferCreateInfo fsci{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0, renderPass, 1, &imageSourceView, cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), 1 };
-//	ret = vkCreateFramebuffer( cvkDevice, &fsci, nullptr, &framebufferSource ); RESULT_HANDLER( errorCode, "vkCreateFramebuffer" );
-        
+               
         try(MemoryStack stack = stackPush()) {
             VkFramebufferCreateInfo framebufferInfo = VkFramebufferCreateInfo.callocStack(stack);
             framebufferInfo.sType(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
-            // TODO Do need to create a new render pass?
-            framebufferInfo.renderPass(hOffscreenRenderPassHandle);
+            framebufferInfo.renderPass(cvkSwapChain.GetOffscreenRenderPassHandle());
             framebufferInfo.width(cvkSwapChain.GetWidth());
             framebufferInfo.height(cvkSwapChain.GetHeight());
             framebufferInfo.layers(1);
 
-            //framebufferHandles = new ArrayList<>(imageCount);
             LongBuffer attachments = stack.mallocLong(2);
             LongBuffer pFramebuffer = stack.mallocLong(1);
 
@@ -433,104 +424,104 @@ public class CVKHitTester extends CVKRenderable {
 //        if (vk_failed(ret) ){ return ret; }
 //    }
     
-    private int CreateRenderPass() {
-        CVKAssert(cvkDevice.GetDevice() != null);
-        CVKAssert(cvkDevice.GetSurfaceFormat() != VK_FORMAT_NONE);
-        
-        int ret;      
-        
-        try(MemoryStack stack = stackPush()) {
-        
-            // 0: colour, 1: depth
-            VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.callocStack(2, stack);
-            VkAttachmentReference.Buffer attachmentRefs = VkAttachmentReference.callocStack(2, stack);        
-
-                  // Color attachment
-//		attchmentDescriptions[0].format = FB_COLOR_FORMAT;
-//		attchmentDescriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
-//		attchmentDescriptions[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-//		attchmentDescriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-//		attchmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-//		attchmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-//		attchmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-//		attchmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            // Colour attachment
-            VkAttachmentDescription colorAttachment = attachments.get(0);
-            colorAttachment.format(colorFormat);
-            colorAttachment.samples(VK_SAMPLE_COUNT_1_BIT);
-            colorAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR);
-            colorAttachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-            colorAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE);
-            colorAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
-
-            // These are the states of our display images at the start and end of this pass
-            colorAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
-            colorAttachment.finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-            VkAttachmentReference colorAttachmentRef = attachmentRefs.get(0);
-            colorAttachmentRef.attachment(0);
-            colorAttachmentRef.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
-            //		// Depth attachment
-//		attchmentDescriptions[1].format = fbDepthFormat;
-//		attchmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
-//		attchmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-//		attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-//		attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-//		attchmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-//		attchmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-//		attchmentDescriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+//    private int CreateRenderPass() {
+//        CVKAssert(cvkDevice.GetDevice() != null);
+//        CVKAssert(cvkDevice.GetSurfaceFormat() != VK_FORMAT_NONE);
+//        
+//        int ret;      
+//        
+//        try(MemoryStack stack = stackPush()) {
+//        
+//            // 0: colour, 1: depth
+//            VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.callocStack(2, stack);
+//            VkAttachmentReference.Buffer attachmentRefs = VkAttachmentReference.callocStack(2, stack);        
 //
-//		VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-//		VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-            // Depth attachment
-            VkAttachmentDescription depthAttachment = attachments.get(1);
-            depthAttachment.format(cvkSwapChain.GetDepthFormat());
-            depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT);
-            depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR);
-            depthAttachment.storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
-            depthAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE);
-            depthAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
-            depthAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);//VK_IMAGE_LAYOUT_UNDEFINED);
-            depthAttachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL); //VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-            VkAttachmentReference depthAttachmentRef = attachmentRefs.get(1);
-            depthAttachmentRef.attachment(1);
-            depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);  
-
-            VkSubpassDescription.Buffer subpass = VkSubpassDescription.callocStack(1, stack);
-            subpass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS);
-            subpass.colorAttachmentCount(1);
-            // This bit of hackery is because pColorAttachments is a buffer of multiple references, whereas pDepthStencilAttachment is singular
-            subpass.pColorAttachments(VkAttachmentReference.callocStack(1, stack).put(0, colorAttachmentRef)); 
-            subpass.pDepthStencilAttachment(depthAttachmentRef);
-
-            VkSubpassDependency.Buffer dependency = VkSubpassDependency.callocStack(1, stack);
-            dependency.srcSubpass(VK_SUBPASS_EXTERNAL);
-            dependency.dstSubpass(0);
-            dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            dependency.srcAccessMask(0);
-            dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-            dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-
-            VkRenderPassCreateInfo renderPassInfo = VkRenderPassCreateInfo.callocStack(stack);
-            renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
-            renderPassInfo.pAttachments(attachments);
-            renderPassInfo.pSubpasses(subpass);
-            renderPassInfo.pDependencies(dependency);
-
-            LongBuffer pRenderPass = stack.mallocLong(1);
-            ret = vkCreateRenderPass(cvkDevice.GetDevice(),
-                                     renderPassInfo, 
-                                     null, //allocation callbacks
-                                     pRenderPass);
-            if (VkSucceeded(ret)) {
-                hOffscreenRenderPassHandle = pRenderPass.get(0);        
-            }
-        }
-        return ret;
-    } 
+//                  // Color attachment
+////		attchmentDescriptions[0].format = FB_COLOR_FORMAT;
+////		attchmentDescriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
+////		attchmentDescriptions[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+////		attchmentDescriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+////		attchmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+////		attchmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+////		attchmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+////		attchmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+//
+//            // Colour attachment
+//            VkAttachmentDescription colorAttachment = attachments.get(0);
+//            colorAttachment.format(colorFormat);
+//            colorAttachment.samples(VK_SAMPLE_COUNT_1_BIT);
+//            colorAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR);
+//            colorAttachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+//            colorAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE);
+//            colorAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
+//
+//            // These are the states of our display images at the start and end of this pass
+//            colorAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
+//            colorAttachment.finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+//
+//            VkAttachmentReference colorAttachmentRef = attachmentRefs.get(0);
+//            colorAttachmentRef.attachment(0);
+//            colorAttachmentRef.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+//
+//            //		// Depth attachment
+////		attchmentDescriptions[1].format = fbDepthFormat;
+////		attchmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
+////		attchmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+////		attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+////		attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+////		attchmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+////		attchmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+////		attchmentDescriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+////
+////		VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+////		VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+//            // Depth attachment
+//            VkAttachmentDescription depthAttachment = attachments.get(1);
+//            depthAttachment.format(cvkSwapChain.GetDepthFormat());
+//            depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT);
+//            depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR);
+//            depthAttachment.storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
+//            depthAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE);
+//            depthAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE);
+//            depthAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);//VK_IMAGE_LAYOUT_UNDEFINED);
+//            depthAttachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL); //VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+//
+//            VkAttachmentReference depthAttachmentRef = attachmentRefs.get(1);
+//            depthAttachmentRef.attachment(1);
+//            depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);  
+//
+//            VkSubpassDescription.Buffer subpass = VkSubpassDescription.callocStack(1, stack);
+//            subpass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS);
+//            subpass.colorAttachmentCount(1);
+//            // This bit of hackery is because pColorAttachments is a buffer of multiple references, whereas pDepthStencilAttachment is singular
+//            subpass.pColorAttachments(VkAttachmentReference.callocStack(1, stack).put(0, colorAttachmentRef)); 
+//            subpass.pDepthStencilAttachment(depthAttachmentRef);
+//
+//            VkSubpassDependency.Buffer dependency = VkSubpassDependency.callocStack(1, stack);
+//            dependency.srcSubpass(VK_SUBPASS_EXTERNAL);
+//            dependency.dstSubpass(0);
+//            dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+//            dependency.srcAccessMask(0);
+//            dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+//            dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+//
+//            VkRenderPassCreateInfo renderPassInfo = VkRenderPassCreateInfo.callocStack(stack);
+//            renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
+//            renderPassInfo.pAttachments(attachments);
+//            renderPassInfo.pSubpasses(subpass);
+//            renderPassInfo.pDependencies(dependency);
+//
+//            LongBuffer pRenderPass = stack.mallocLong(1);
+//            ret = vkCreateRenderPass(cvkDevice.GetDevice(),
+//                                     renderPassInfo, 
+//                                     null, //allocation callbacks
+//                                     pRenderPass);
+//            if (VkSucceeded(ret)) {
+//                hOffscreenRenderPassHandle = pRenderPass.get(0);        
+//            }
+//        }
+//        return ret;
+//    } 
     
     
     // ========================> Descriptors <======================== \\
@@ -590,7 +581,7 @@ public class CVKHitTester extends CVKRenderable {
 
     @Override
     public int OffscreenRender(List<CVKRenderable> hitTestRenderables) {
-        VerifyInRenderThread();
+        parent.VerifyInRenderThread();
         
         CVKAssert(cvkDevice.GetDevice() != null);
         CVKAssert(cvkDevice.GetCommandPoolHandle() != VK_NULL_HANDLE);
@@ -660,7 +651,7 @@ public class CVKHitTester extends CVKRenderable {
 
             VkRenderPassBeginInfo renderPassInfo = VkRenderPassBeginInfo.callocStack(stack);
             renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
-            renderPassInfo.renderPass(hOffscreenRenderPassHandle);
+            renderPassInfo.renderPass(cvkSwapChain.GetOffscreenRenderPassHandle());
 
             VkRect2D renderArea = VkRect2D.callocStack(stack);
             renderArea.offset(VkOffset2D.callocStack(stack).set(0, 0));
@@ -679,7 +670,7 @@ public class CVKHitTester extends CVKRenderable {
             inheritanceInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO);
             inheritanceInfo.pNext(0);
             inheritanceInfo.framebuffer(vkFrameBufferHandle);
-            inheritanceInfo.renderPass(hOffscreenRenderPassHandle);
+            inheritanceInfo.renderPass(cvkSwapChain.GetOffscreenRenderPassHandle());
             //inheritanceInfo.subpass(0); // Get the subpass of make it here?
             inheritanceInfo.occlusionQueryEnable(false);
             inheritanceInfo.queryFlags(0);
@@ -691,14 +682,14 @@ public class CVKHitTester extends CVKRenderable {
             //commandBuffer.scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
             
             // Check flags and render the nodes and connections
-            /// Loop through command buffers and record their buffers
-            // TODO test for empty list?
-//            hitTestRenderables.forEach(renderable -> {
+            /// Loop through command buffers of hit test objects and record their buffers
+            hitTestRenderables.forEach(renderable -> {
+            // TODO HYDRA - WIP HIT TESTER
 //                if (renderable.GetVertexCount() > 0) {
-//                    renderable.RecordCommandBuffer(inheritanceInfo, 0);
+//                    renderable.RecordOffscreenCommandBuffer(inheritanceInfo, 0);
 //                    vkCmdExecuteCommands(commandBuffer.GetVKCommandBuffer(), renderable.GetCommandBuffer(0));
 //                }
-//            });
+            });
             
             vkCmdEndRenderPass(commandBuffer.GetVKCommandBuffer());
         
@@ -720,7 +711,7 @@ public class CVKHitTester extends CVKRenderable {
             // Copy the contents of the image to a buffer
             //vkCmdCopyImageToBuffer
             
-            MapMemory();
+            //MapMemory();
         }
         
         

@@ -149,26 +149,16 @@ public abstract class CVKRenderable {
     
     public abstract void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs);
     public abstract int RecordCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index);
+    public int RecordOffscreenCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index) { return VK_SUCCESS; }
     public int OffscreenRender(List<CVKRenderable> hitTestRenderables){ return VK_SUCCESS; }
 
-    /*
-        Returns the number of vertices used in the vertex buffer
-    */
+    /**
+     * @return Returns the number of vertices used in the vertex buffer
+     */
     public abstract int GetVertexCount();
 
     
     public boolean NeedsDisplayUpdate() { return false; }
     public int DisplayUpdate() { return VK_SUCCESS; }
-
-
-    /**
-     * Tasks that implement CVKRenderableUpdateTask are created in the VisualProcessor
-     * thread in response to user input.  If those tasks have constructors that 
-     * code will be executed in the VisualProcessor thread.  Code in the run method
-     * is called from the render thread (AWT Event thread).
-     */
-    @FunctionalInterface
-    public static interface CVKRenderableUpdateTask {
-        public void run();
-    }         
+    
 }

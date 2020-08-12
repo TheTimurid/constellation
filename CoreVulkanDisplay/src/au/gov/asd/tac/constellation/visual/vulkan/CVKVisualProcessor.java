@@ -34,8 +34,9 @@ import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKAxesRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKFPSRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKIconsRenderable;
+import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKPointsRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable;
-import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable.CVKRenderableUpdateTask;
+import au.gov.asd.tac.constellation.visual.vulkan.CVKRenderUpdateTask;
 import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger;
 import java.awt.Component;
 import java.awt.Cursor;
@@ -56,6 +57,8 @@ import org.lwjgl.vulkan.awt.VKData;
 
 public class CVKVisualProcessor extends VisualProcessor {
 
+    private static boolean DEBUGGING_POINTS = false;
+    
     protected static final Cursor DEFAULT_CURSOR = Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR);
     protected static final Cursor CROSSHAIR_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);  
     
@@ -63,7 +66,7 @@ public class CVKVisualProcessor extends VisualProcessor {
     private static final float PERSPECTIVE_NEAR = 1;
     private static final float PERSPECTIVE_FAR = 500000;
     
-    private final BlockingQueue<CVKRenderable.CVKRenderableUpdateTask> taskQueue = new LinkedBlockingQueue<>();
+    private final BlockingQueue<CVKRenderUpdateTask> taskQueue = new LinkedBlockingQueue<>();
     private final CVKCanvas cvkCanvas;
     private final CVKRenderer cvkRenderer;
     private final Frustum viewFrustum = new Frustum();
@@ -72,6 +75,7 @@ public class CVKVisualProcessor extends VisualProcessor {
     private CVKAxesRenderable cvkAxes = null;
     private CVKFPSRenderable cvkFPS = null;
     private CVKIconsRenderable cvkIcons = null;
+    private CVKPointsRenderable cvkPoints = null;
     private final Matrix44f modelViewMatrix = new Matrix44f();  
     private Camera camera;
     private float pixelDensity = 0.0f;    
@@ -122,7 +126,7 @@ public class CVKVisualProcessor extends VisualProcessor {
     }      
     
     
-    void addTask(final CVKRenderableUpdateTask task) {
+    void addTask(final CVKRenderUpdateTask task) {
         taskQueue.add(task);
     }
     
@@ -185,7 +189,7 @@ public class CVKVisualProcessor extends VisualProcessor {
      * display cycle.
      */
     public final Matrix44f getDisplayModelViewMatrix() {
-        return modelViewMatrix;
+        return modelViewMatrix; // TODO: why is this different to Graphics3DUtilities.getModelViewMatrix(camera)?
     }
 
     /**
@@ -244,7 +248,12 @@ public class CVKVisualProcessor extends VisualProcessor {
 
         @Override
         public void apply() {
-            // TODO_TT: this whole func
+           
+            // Currently in the VisualProcessor thread, add a task to trigger
+            // the save to file from the Render thread.
+            if (cvkRenderer != null) {
+                addTask(cvkRenderer.TaskRequestScreenshot(file));
+            }
 //            graphRenderable.addTask(drawable -> {
 //                final GL30 gl = drawable.getGL().getGL3();
 //                gl.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
@@ -372,7 +381,7 @@ public class CVKVisualProcessor extends VisualProcessor {
     
     public int ProcessRenderTasks(CVKSwapChain cvkSwapChain) {
         int ret = VK_SUCCESS;
-        final List<CVKRenderableUpdateTask> tasks = new ArrayList<>();
+        final List<CVKRenderUpdateTask> tasks = new ArrayList<>();
         taskQueue.drainTo(tasks);
         tasks.forEach(task -> { task.run(); });      
         return ret;
@@ -496,11 +505,47 @@ public class CVKVisualProcessor extends VisualProcessor {
 
     @Override
     protected final VisualChangeProcessor getChangeProcessor(final VisualProperty property) {
+        if (DEBUGGING_POINTS) {
+            switch (property) {
+                case VERTICES_REBUILD:
+                    return (change, access) -> {                       
+                        if (cvkPoints != null) {
+                            addTask(cvkPoints.TaskRebuildPoints(access));
+                        }
+                    };
+                case VERTEX_X:
+                    return (change, access) -> {
+                        if (cvkPoints != null) {
+                            addTask(cvkPoints.TaskUpdatePoints(change, access));
+                        }   
+                    };
+            case CAMERA:
+                return (change, access) -> {
+                    camera = access.getCamera();
+                    setDisplayCamera(camera);
+                    Graphics3DUtilities.getModelViewMatrix(camera.lookAtEye, camera.lookAtCentre, camera.lookAtUp, getDisplayModelViewMatrix());
+                    
+                    if (cvkAxes != null) {
+                        addTask(cvkAxes.TaskUpdateCamera());
+                    }
+                    if (cvkPoints != null) {
+                        addTask(cvkPoints.TaskUpdateCamera());
+                    }
+                };      
+            case EXTERNAL_CHANGE:
+            default:
+                return (change, access) -> {
+                };                
+            }
+        }
+
+        
         switch (property) {
             case VERTICES_REBUILD:
                 return (change, access) -> {
                     // Recreate all the icons.  Note this is sometimes called before the CVKDevice
                     // has been initialised (we don't create our renderables until then).
+                    
                     if (cvkIcons != null) {
                         addTask(cvkIcons.TaskRebuildIcons(access));
                         addTask(cvkIcons.TaskRebuildVertexFlags(access));
@@ -674,12 +719,14 @@ public class CVKVisualProcessor extends VisualProcessor {
         CVKAssert(cvkDevice != null && cvkDevice.GetDevice() != null);              
         
         // Static as the shader and descriptor layout doesn't change per instance of renderable or over the course of the program
-        ret = CVKAxesRenderable.StaticInitialise(cvkDevice);
+        ret = CVKAxesRenderable.StaticInitialise();
         if (VkFailed(ret)) { return ret; }
-        ret = CVKFPSRenderable.StaticInitialise(cvkDevice);      
+        ret = CVKFPSRenderable.StaticInitialise();      
         if (VkFailed(ret)) { return ret; }   
-        ret = CVKIconsRenderable.StaticInitialise(cvkDevice);      
-        if (VkFailed(ret)) { return ret; }           
+        ret = CVKIconsRenderable.StaticInitialise();      
+        if (VkFailed(ret)) { return ret; }    
+        ret = CVKPointsRenderable.StaticInitialise();
+        if (VkFailed(ret)) { return ret; }        
      
         // Initialise the shared atlas texture.  It extends renderable so it gets the call
         // for updating shared resouces.  We could have a seperate render event listener but
@@ -696,6 +743,9 @@ public class CVKVisualProcessor extends VisualProcessor {
         cvkIcons = new CVKIconsRenderable(this);
         cvkRenderer.AddRenderable(cvkIcons);
 
+
+        cvkPoints = new CVKPointsRenderable(this);
+        cvkRenderer.AddRenderable(cvkPoints);
         
         return ret;
     }    
@@ -723,9 +773,9 @@ public class CVKVisualProcessor extends VisualProcessor {
     } 
     
     public List<CVKRenderable> GetHitTesterList() {
-        // TODO Cache me
+        // TODO Hydra - Cache me
         List<CVKRenderable> hitTesters = new ArrayList<>();
-        hitTesters.add(cvkAxes);
+        hitTesters.add(cvkIcons);
         return hitTesters;
     }
 }
