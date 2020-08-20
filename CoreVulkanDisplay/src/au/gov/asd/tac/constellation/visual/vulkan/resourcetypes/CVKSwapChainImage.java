@@ -21,7 +21,7 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 public class CVKSwapChainImage extends CVKImage {
     private CVKSwapChainImage() {}
     
-    public static CVKSwapChainImage Initialise(CVKDevice cvkDevice,
+    public static CVKSwapChainImage Create(CVKDevice cvkDevice,
                                  long imageHandle) {
         CVKSwapChainImage cvkImage   = new CVKSwapChainImage();
         cvkImage.cvkDevice  = cvkDevice;
@@ -38,6 +38,8 @@ public class CVKSwapChainImage extends CVKImage {
         cvkImage.layout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         cvkImage.pImage.put(0, imageHandle);
         
+        cvkImage.CreateImageView();
+        
         return cvkImage;
     }
     
@@ -47,9 +49,10 @@ public class CVKSwapChainImage extends CVKImage {
         // Don't call super! 
         // Don't destroy the image handles as the swapchain objects owns their memory
         DestroyImageView();
+        ResetImageHandle();
     }
     
-    public void ResetImageHandle() {
+    private void ResetImageHandle() {
         pImage.put(0, VK_NULL_HANDLE);
     }
     

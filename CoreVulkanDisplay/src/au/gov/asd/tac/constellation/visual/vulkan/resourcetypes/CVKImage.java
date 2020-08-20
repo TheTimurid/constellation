@@ -72,11 +72,12 @@ import org.lwjgl.vulkan.VkMemoryAllocateInfo;
 import org.lwjgl.vulkan.VkMemoryRequirements;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_INVALID_IMAGE;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKFormatUtils.VkFormatByteDepth;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNotNull;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNull;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_DEBUGGING;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_IMAGE_VIEW_CREATION_FAILED;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_SAVE_TO_FILE_FAILED;
@@ -142,7 +143,10 @@ public class CVKImage {
     protected int imageType           = 0;
     protected int viewType            = 0;
     protected int layout              = 0;    
-    
+    protected String DEBUGNAME        = "";
+    protected PointerBuffer pWriteMemory = null;
+    CVKImage destImage                  = null;
+
     protected CVKImage() {}
     
     public long GetImageHandle() { return pImage.get(0); }
@@ -161,9 +165,11 @@ public class CVKImage {
         if (CVK_DEBUGGING && pImage.get(0) != VK_NULL_HANDLE) {
             if (pImageMemory != null && pImageMemory.get(0) != VK_NULL_HANDLE) {
                 --CVK_VKALLOCATIONS;
-                cvkDevice.Logger().fine(String.format("CVK_VKALLOCATIONS (%d-) Destroy called on CVKImage (0x%016X), vkFreeMemory will be called", CVK_VKALLOCATIONS, pImage.get(0)));
+                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS (%d-) Destroy called on CVKimage %s (image:0x%016X memory:0x%016X), vkFreeMemory will be called", 
+                        CVK_VKALLOCATIONS, DEBUGNAME, pImage.get(0), pImageMemory.get(0));                      
             } else {
-                cvkDevice.Logger().fine(String.format("CVK_VKALLOCATIONS (%d!) Destroy called on CVKImage (0x%016X), vkFreeMemory will NOT be called", CVK_VKALLOCATIONS, pImage.get(0)));
+                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS (%d!) Destroy called on CVKimage %s (image:0x%016X memory:0x%016X), vkFreeMemory will NOT be called", 
+                        CVK_VKALLOCATIONS, DEBUGNAME, pImage.get(0), pImageMemory.get(0));  
             }            
         }                
         if (pImage.get(0) != VK_NULL_HANDLE) {
@@ -201,8 +207,7 @@ public class CVKImage {
     public int Transition(int newLayout) {
         int ret;
         
-        CVKCommandBuffer cvkTransitionCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-        cvkTransitionCmd.DEBUGNAME = "CVKImage.Transition cvkTransitionCmd";
+        CVKCommandBuffer cvkTransitionCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY, "CVKImage.Transition cvkTransitionCmd");
         ret = cvkTransitionCmd.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         if (VkFailed(ret)) { return ret; }
         ret = Transition(cvkTransitionCmd, newLayout);
@@ -233,6 +238,7 @@ public class CVKImage {
      * @return
      */
     
+    // TODO HYDRA - Check if this is still needed?
     public int Transition(CVKCommandBuffer cvkCmdBuf, int oldLayout, int newLayout) {
          layout = oldLayout;
          return Transition(cvkCmdBuf, newLayout);
@@ -413,8 +419,7 @@ public class CVKImage {
         }
         
         // Command to copy pixels and potentially transition if necessary
-        CVKCommandBuffer cvkCopyCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-        cvkCopyCmd.DEBUGNAME = "CVKImage.CopyFrom cvkCopyCmd";
+        CVKCommandBuffer cvkCopyCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY, "CVKImage.CopyFrom cvkCopyCmd");
         ret = cvkCopyCmd.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         if (VkFailed(ret)) { return ret; }
          
@@ -457,7 +462,9 @@ public class CVKImage {
         }        
         
         // Blocking execute the command buffer
-        ret = cvkCopyCmd.EndAndSubmit();  
+        ret = cvkCopyCmd.EndAndSubmit();
+        if (VkFailed(ret)) { return ret; }
+        
         cvkCopyCmd.Destroy();
         
         return ret;
@@ -478,6 +485,7 @@ public class CVKImage {
      * @param usage
      * @param properties
      * @param aspectMask
+     * @param debugName
      * @return The image or null if errors occur
      */
     public static CVKImage Create(  CVKDevice cvkDevice,
@@ -489,7 +497,8 @@ public class CVKImage {
                                     int tiling,
                                     int usage, 
                                     int properties,
-                                    int aspectMask) {
+                                    int aspectMask,
+                                    String debugName) {
         CVKImage cvkImage = CreateImage(cvkDevice,
                 width,
                 height,
@@ -499,7 +508,8 @@ public class CVKImage {
                 tiling,
                 usage,
                 properties,
-                aspectMask);
+                aspectMask,
+                debugName);
         
         cvkImage.CreateImageView();
         
@@ -521,6 +531,7 @@ public class CVKImage {
      * @param usage
      * @param properties
      * @param aspectMask
+     * @param debugName
      * @return The image or null if errors occur
      */
     public static CVKImage CreateImage(  CVKDevice cvkDevice,
@@ -532,10 +543,11 @@ public class CVKImage {
                                     int tiling,
                                     int usage, 
                                     int properties,
-                                    int aspectMask) {
-        assert(cvkDevice != null);
-        assert(cvkDevice.GetDevice() != null);
-        assert(layers >= 1);
+                                    int aspectMask,
+                                    String debugName) {
+        CVKAssertNotNull(cvkDevice);
+        CVKAssertNotNull(cvkDevice.GetDevice());
+        CVKAssert(layers >= 1);
         
         int ret;
         CVKImage cvkImage   = new CVKImage();
@@ -551,6 +563,7 @@ public class CVKImage {
         cvkImage.imageType  = height > 1 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_1D;
         cvkImage.viewType   = viewType;
         cvkImage.layout     = VK_IMAGE_LAYOUT_UNDEFINED;
+        cvkImage.DEBUGNAME  = debugName;
          
         try(MemoryStack stack = stackPush()) {
             // Create the image, this is an opaque type we can't read or write
@@ -570,8 +583,9 @@ public class CVKImage {
             vkImageInfo.sharingMode(VK_SHARING_MODE_EXCLUSIVE);
 
             ret = vkCreateImage(cvkDevice.GetDevice(), vkImageInfo, null, cvkImage.pImage);
-            checkVKret(ret);
-            CVKAssert(cvkImage.pImage.get(0) != VK_NULL_HANDLE);
+            if (VkFailed(ret)) { return null; }
+            
+            CVKAssertNotNull(cvkImage.pImage.get(0));
 
             // The image isn't backed by memory, do that now
             VkMemoryRequirements vkMemoryRequirements = VkMemoryRequirements.mallocStack(stack);
@@ -587,10 +601,9 @@ public class CVKImage {
             }
             if (CVK_DEBUGGING) {
                 ++CVK_VKALLOCATIONS;
-                cvkDevice.Logger().fine(String.format("CVK_VKALLOCATIONS(%d+) vkAllocateMemory(%d) for CVKimage (0x%016X)", 
-                        CVK_VKALLOCATIONS, vkMemoryRequirements.size(), cvkImage.pImage.get(0)));
-            }
-//            LogStackTrace();            
+                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS(%d+) vkAllocateMemory(%d) for CVKimage %s (image:0x%016X memory:0x%016X)", 
+                        CVK_VKALLOCATIONS, vkMemoryRequirements.size(), cvkImage.DEBUGNAME, cvkImage.pImage.get(0), cvkImage.pImageMemory.get(0));
+            }        
 
             vkBindImageMemory(cvkDevice.GetDevice(), cvkImage.pImage.get(0), cvkImage.pImageMemory.get(0), 0);
         }
@@ -619,11 +632,11 @@ public class CVKImage {
                 vkViewInfo.subresourceRange().layerCount(layers);
 
                 ret = vkCreateImageView(cvkDevice.GetDevice(), vkViewInfo, null, pImageView);
-                checkVKret(ret);
+                if (VkFailed(ret)) { return ret; }
 
         } catch (Exception e) {
             // TODO HYDRA TEST THIS CODE PATH       
-            cvkDevice.Logger().info("Image View creation failed for Image Handle %d. Image will be destroyed!", GetImageHandle());
+            cvkDevice.GetLogger().LogException(e, "Image View creation failed for Image Handle %d. Image will be destroyed!", GetImageHandle());
             ret = CVK_ERROR_IMAGE_VIEW_CREATION_FAILED;
             
             DestroyImage();
@@ -635,60 +648,63 @@ public class CVKImage {
     
     
     /**
-     * Prepares the image 
+     * Copies this image into destImage in CPU memory to the VK_FORMAT_R8G8B8A8_UNORM
+     * format
      * 
      * @param stack
-     * @return 
+     * @return error code
      */
-    public CVKImage PrepareImageToMemory(MemoryStack stack) {
+    public int CopyToCPUMemoryImage(MemoryStack stack) {
+        CVKAssertNull(destImage);
+        
         int ret = VK_SUCCESS;
  	boolean supportsBlit = true;
         int originalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 
         // Check blit support for source and destination
-        // TODO HYDRA do this once and store result in cvkdevice?
+        // TODO HYDRA do this once and store result in cvkdevice
         VkFormatProperties formatProps = VkFormatProperties.callocStack(stack);
 
         // Check if the device supports blitting from optimal images (the swapchain images are in optimal format)
         vkGetPhysicalDeviceFormatProperties(cvkDevice.GetPhysicalDevice(), format, formatProps);
 
         if ((formatProps.optimalTilingFeatures() & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
-                cvkDevice.Logger().info("Device does not support blitting from optimal tiled images, using copy instead of blit!");
+                cvkDevice.GetLogger().info("Device does not support blitting from optimal tiled images, using copy instead of blit!");
                 supportsBlit = false;
         }
 
         // Check if the device supports blitting to linear images
         vkGetPhysicalDeviceFormatProperties(cvkDevice.GetPhysicalDevice(), VK_FORMAT_R8G8B8A8_UNORM, formatProps);
         if ((formatProps.linearTilingFeatures() & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) {
-                cvkDevice.Logger().info("Device does not support blitting to linear tiled images, using copy instead of blit!");
+                cvkDevice.GetLogger().info("Device does not support blitting to linear tiled images, using copy instead of blit!");
                 supportsBlit = false;
         }
 
         // Source for the copy is the last rendered swapchain image
         originalLayout = layout;
-        CVKImage srcImage = this; //swapChain.images[currentBuffer];
+        CVKImage srcImage = this;
 
         // Create the linear tiled destination image to copy to and to read the memory from
-        CVKImage destImage = null;
-
         destImage = CVKImage.Create(cvkDevice, width, height, 
                 layers, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_LINEAR, 
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                aspectMask);
-
+                aspectMask,
+                "CVKImage destImage");
+        if (destImage == null) { return 1; }
+        
         // Do the actual blit from the swapchain image to our host visible destination image
-        CVKCommandBuffer cvkCopyCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+        CVKCommandBuffer cvkCopyCmd = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY, "CVKImage-CopyCmdBuffer");
 
         ret = cvkCopyCmd.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-        checkVKret(ret);
+        if (VkFailed(ret)) { return ret; }
 
         // Transition destination image to transfer destination layout
         ret = destImage.Transition(cvkCopyCmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        checkVKret(ret);
+        if (VkFailed(ret)) { return ret; }
 
         // Transition source image from present to transfer source layout
         ret = srcImage.Transition(cvkCopyCmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        checkVKret(ret);
+        if (VkFailed(ret)) { return ret; }
 
         // If source and destination support blit we'll blit as this also does automatic format conversion (e.g. from BGR to RGB)
         boolean needsSwizzle = false;
@@ -744,20 +760,21 @@ public class CVKImage {
 
         // Transition destination image to general layout, which is the required layout for mapping the image memory later on
         ret = destImage.Transition(cvkCopyCmd, VK_IMAGE_LAYOUT_GENERAL);
-        checkVKret(ret);
+        if (VkFailed(ret)) { return ret; }
 
         // Transition back the image to original layout after the blit is done
         ret = srcImage.Transition(cvkCopyCmd, originalLayout);
-        checkVKret(ret);
+        if (VkFailed(ret)) { return ret; }
 
         // Submit the commands and wait
         cvkCopyCmd.EndAndSubmit();
                 
-        return destImage;
+        return ret;
     }
     
     
-    public PointerBuffer StartMapMemory(MemoryStack stack, CVKImage destImage) {
+    public PointerBuffer StartMemoryMap(MemoryStack stack) {
+        CVKAssert(pWriteMemory == null);    
         int ret = VK_SUCCESS;
         
         // Get layout of the image (including row pitch)
@@ -767,21 +784,39 @@ public class CVKImage {
         vkGetImageSubresourceLayout(cvkDevice.GetDevice(), destImage.GetImageHandle(), subResource, subResourceLayout);
 
         // Map Memory
-        PointerBuffer pWriteMemory = stack.mallocPointer(1);
+        pWriteMemory = MemoryUtil.memAllocPointer(1);
         long offset = subResourceLayout.offset();
 
         ret = vkMapMemory(cvkDevice.GetDevice(), destImage.GetMemoryImageHandle(), offset, VK_WHOLE_SIZE, 0, pWriteMemory);
         if (VkFailed(ret)) 
         { 
-            cvkDevice.Logger().severe(String.format("Mapping image memory failed"));
+            cvkDevice.GetLogger().severe(String.format("Mapping image memory failed"));
             return null; 
         }
         
         return pWriteMemory;     
     }       
     
+    
     /**
+     * Cleanup the mapped memory and from StartMemoryMap and destroy the destImage
      * 
+     */
+    public void EndMemoryMap() {
+        CVKAssertNotNull(pWriteMemory);
+        vkUnmapMemory(cvkDevice.GetDevice(), destImage.GetMemoryImageHandle());
+        MemoryUtil.memFree(pWriteMemory);
+        pWriteMemory = null;
+        destImage.Destroy();
+        destImage = null;
+    }
+    
+    
+    /**
+     * SaveMemoryToFile
+     * 
+     * Takes the imageSource, that has already been transitioned to CPU memory,
+     * and saves it to file in the PNG format.
      * 
      * @param stack
      * @param file
@@ -790,11 +825,11 @@ public class CVKImage {
      * @param needsSwizzle
      * @return 
      */
-    public int SaveMemoryToFile(MemoryStack stack, File file, PointerBuffer imageMemory, CVKImage imageSource, boolean needsSwizzle) {
+    public int SaveMemoryToFile(MemoryStack stack, File file, boolean needsSwizzle) {
         // Check paramters
-        CVKAssert(file != null);
-        CVKAssert(imageMemory != null);
-        CVKAssert(imageSource != null);
+        CVKAssertNotNull(file);
+        CVKAssertNotNull(pWriteMemory);
+        CVKAssertNotNull(destImage);
         
         int ret = VK_SUCCESS;
         BufferedImage out = null;
@@ -803,7 +838,7 @@ public class CVKImage {
         VkImageSubresource subResource = VkImageSubresource.callocStack(stack);
         subResource.set(VK_IMAGE_ASPECT_COLOR_BIT, 0, 0);
         VkSubresourceLayout subResourceLayout = VkSubresourceLayout.callocStack(stack);
-        vkGetImageSubresourceLayout(cvkDevice.GetDevice(), imageSource.GetImageHandle(), subResource, subResourceLayout);
+        vkGetImageSubresourceLayout(cvkDevice.GetDevice(), destImage.GetImageHandle(), subResource, subResourceLayout);
 
         // The destination image is in the format VK_FORMAT_B8G8R8A8_UNORM:
         // CmdBlitImage() automatically converts between formats for us.
@@ -832,15 +867,15 @@ public class CVKImage {
             // Create the output buffered image with the original images
             // width and height, and in the PNG format (3 bytes BGR)
             out = new BufferedImage(width, height, TYPE_3BYTE_BGR);
-            byte[] rgb = new byte[(int)fileSize];
+            byte[] rgb = new byte[fileSize];
             int i = 0;
             int r = 0;
 
-            ByteBuffer row = imageMemory.getByteBuffer((int)sourceImageSize);
+            ByteBuffer row = pWriteMemory.getByteBuffer((int)sourceImageSize);
 
-            for (int y = 0; y < fileHeight; y++)
+            for (int y = 0; y < fileHeight; ++y)
             {                   
-                for (int x = 0; x < fileWidth; x++)
+                for (int x = 0; x < fileWidth; ++x)
                 {
                     // Skip the padded bytes
                     if (x >= width) {
@@ -878,31 +913,21 @@ public class CVKImage {
                     new int[] {0, 1, 2},    // colour format order (i.e. byte 0 is first, byte 1 is second ...
                                             // can change order if you want a different format rgb -> bgr
                     (Point)null);           // TODO Look up this
-            ColorModel cm = new ComponentColorModel(ColorModel.getRGBdefault().getColorSpace(), false, true, Transparency.OPAQUE, DataBuffer.TYPE_BYTE); 
-            BufferedImage image = new BufferedImage(cm, raster, true, null);
+            ColorModel colorModel = new ComponentColorModel(ColorModel.getRGBdefault().getColorSpace(), false, true, Transparency.OPAQUE, DataBuffer.TYPE_BYTE); 
+            BufferedImage image = new BufferedImage(colorModel, raster, true, null);
 
             // Save to file
             ImageIO.write(image, "png", file);
         }
         catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
-            cvkDevice.Logger().warning(String.format("Save file failed: %s", file.getName()));
+            cvkDevice.GetLogger().LogException(e, String.format("Save file failed: %s", file.getName()));
             return CVK_ERROR_SAVE_TO_FILE_FAILED;
         }
 
         return ret;
     }
-    
-    
-    /**
-     * Cleanup the mapped memory from StartMapMemory
-     * 
-     * @param imageSource 
-     */
-    public void EndMapMemory(CVKImage imageSource) {    
-        vkUnmapMemory(cvkDevice.GetDevice(), imageSource.GetMemoryImageHandle());
-    }
-    
+       
 
     /**
      * Creates a file from filename and saves this image to it
@@ -921,23 +946,24 @@ public class CVKImage {
      * @return 
      */
     public int SaveToFile(File file) {
-        CVKAssert(file != null);
+        CVKAssertNotNull(file);
         int ret;
 
         try( MemoryStack stack = stackPush()) {
-            PointerBuffer imageMemory = null;
-            CVKImage destImage = PrepareImageToMemory(stack);
-            CVKAssert(destImage != null);
-            
+            // Copy this image into CPU memory
+            ret = CopyToCPUMemoryImage(stack);
+            if (VkFailed(ret)) { return ret; }
+                        
             // Start mapping the destination images memory
-            imageMemory = StartMapMemory(stack, destImage);
+            StartMemoryMap(stack);
             
             // Save to the given file
-            ret = SaveMemoryToFile(stack, file, imageMemory, destImage, false);
+            ret = SaveMemoryToFile(stack, file, false);
             if (VkFailed(ret)) { return ret; }
 
-            // Cleanup the memory mapping
-            EndMapMemory(destImage);
+            // Cleanup
+            EndMemoryMap();
+     
         }
         return ret;
     }

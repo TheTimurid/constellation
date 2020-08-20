@@ -97,6 +97,13 @@ public class CVKCommandBuffer {
     public void Destroy(){        
         if (vkCommandBuffer != null) {
             cvkDevice.VerifyInRenderThread();
+            
+//            if (CVK_DEBUGGING) {
+//                --CVK_VKALLOCATIONS;
+//                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS(%d-) vkFreeCommandBuffers for %s 0x%016X", 
+//                        CVK_VKALLOCATIONS, DEBUGNAME, vkCommandBuffer.address());                
+//            }             
+            
             vkFreeCommandBuffers(cvkDevice.GetDevice(), cvkDevice.GetCommandPoolHandle(), vkCommandBuffer);
             vkCommandBuffer = null;
         }
@@ -402,7 +409,7 @@ public class CVKCommandBuffer {
 			int srcAccessMask, int dstAccessMask, int srcStageMask, int dstStageMask,
 			int baseMipLevel, int mipLevelCount){
 		
-            // TODO change to callocStack?
+            // TODO change to callocStack
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1);
             barrier.sType(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
             barrier.oldLayout(oldLayout);
@@ -460,7 +467,7 @@ public class CVKCommandBuffer {
 //		vkResetCommandBuffer(vkCommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 //	}
 //	
-    public static CVKCommandBuffer Create(CVKDevice cvkDevice, int level) {
+    public static CVKCommandBuffer Create(CVKDevice cvkDevice, int level, final String debugName) {
         assert(cvkDevice != null);
         assert(cvkDevice.GetDevice() != null);
 
@@ -479,6 +486,13 @@ public class CVKCommandBuffer {
             checkVKret(ret);
 
             cvkCommandBuffer.vkCommandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), cvkDevice.GetDevice());
+            
+//            if (CVK_DEBUGGING) {
+//                cvkCommandBuffer.DEBUGNAME = debugName;
+//                ++CVK_VKALLOCATIONS;
+//                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS(%d+) vkAllocateCommandBuffers for %s 0x%016X", 
+//                        CVK_VKALLOCATIONS, cvkCommandBuffer.DEBUGNAME, cvkCommandBuffer.vkCommandBuffer.address());                
+//            }              
         }
         return cvkCommandBuffer;
     }	
