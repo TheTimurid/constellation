@@ -310,7 +310,7 @@ public class CVKAxesRenderable extends CVKRenderable {
     // ========================> Lifetime <======================== \\
     
     public CVKAxesRenderable(CVKVisualProcessor visualProcessor) {
-        cvkVisualProcessor = visualProcessor;
+        super(visualProcessor);
     }
     
     private int CreateShaderModules() {
@@ -338,7 +338,7 @@ public class CVKAxesRenderable extends CVKRenderable {
             return ret;
         }
         
-        cvkVisualProcessor.GetLogger().info("Shader modules created for CVKAxesRenderable class:\n\tVertex:   0x%016x\n\tGeometry: 0x%016x\n\tFragment: 0x%016x",
+        GetLogger().info("Shader modules created for CVKAxesRenderable class:\n\tVertex:   0x%016x\n\tGeometry: 0x%016x\n\tFragment: 0x%016x",
                 hVertexShaderModule, hGeometryShaderModule, hFragmentShaderModule);
         return ret;
     } 
@@ -647,7 +647,7 @@ public class CVKAxesRenderable extends CVKRenderable {
             
         final int[] viewport = cvkSwapChain.GetViewport();             
         final int dx = cvkSwapChain.GetWidth() / 2 - AXES_OFFSET;
-        final int dy = -cvkSwapChain.GetHeight() / 2 + AXES_OFFSET;
+        final int dy = cvkSwapChain.GetHeight() / 2 - AXES_OFFSET;
         pScale = CalculateProjectionScale(viewport);
         Graphics3DUtilities.moveByProjection(ZERO_3F, IDENTITY_44F, viewport, dx, dy, topRightCorner);
         
@@ -701,7 +701,7 @@ public class CVKAxesRenderable extends CVKRenderable {
             commandBuffers.add(buffer);
         }
         
-        cvkVisualProcessor.GetLogger().info("Init Command Buffer - CVKAxesRenderable");
+        GetLogger().info("Init Command Buffer - CVKAxesRenderable");
         
         return ret;
     }
@@ -967,7 +967,7 @@ public class CVKAxesRenderable extends CVKRenderable {
                 CVKAssertNotNull(pipelines.get(i));
             }
         }
-        cvkVisualProcessor.GetLogger().info("Graphics Pipeline created for AxesRenderable class.");
+        GetLogger().info("Graphics Pipeline created for AxesRenderable class.");
         
         return ret;
     }
@@ -1028,11 +1028,15 @@ public class CVKAxesRenderable extends CVKRenderable {
     private float CalculateProjectionScale(final int[] viewport) {
         // calculate the number of pixels a scene object of y-length 1 projects to.
         final Vector3f unitPosition = new Vector3f(0, 1, 0);
-        final Vector4f proj1 = new Vector4f();
-        Graphics3DUtilities.project(ZERO_3F, IDENTITY_44F, viewport, proj1);
-        final Vector4f proj2 = new Vector4f();
-        Graphics3DUtilities.project(unitPosition, IDENTITY_44F, viewport, proj2);
-        final float yScale = proj2.a[1] - proj1.a[1];
+        final Vector4f projectedOrigin = new Vector4f();
+        Graphics3DUtilities.project(ZERO_3F, IDENTITY_44F, viewport, projectedOrigin);
+        final Vector4f projectedIdentity = new Vector4f();
+        Graphics3DUtilities.project(unitPosition, IDENTITY_44F, viewport, projectedIdentity);
+        float yScale = projectedIdentity.a[1] - projectedOrigin.a[1];
+        
+        // Vulkan flips the Y compared to GL, this has no effect in world space but when we are premultiplying
+        // by the projection matrix we enter clip space, and here we do need to flip Y.
+        yScale = -yScale;
 
         return 25.0f / yScale;
     } 

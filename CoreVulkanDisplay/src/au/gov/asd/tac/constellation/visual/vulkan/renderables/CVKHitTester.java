@@ -106,8 +106,8 @@ public class CVKHitTester extends CVKRenderable {
     
     // ========================> Lifetime <======================== \\
     
-    public CVKHitTester(CVKVisualProcessor parent) {
-        this.cvkVisualProcessor = parent;
+    public CVKHitTester(CVKVisualProcessor visualProcessor) {
+        super(visualProcessor);
     }
     
     @Override
@@ -169,50 +169,46 @@ public class CVKHitTester extends CVKRenderable {
         CVKAssertNotNull(cvkSwapChain);
         CVKAssert(cvkSwapChain.GetDepthFormat() != VK_FORMAT_UNDEFINED);
         
-        int ret = VK_SUCCESS;
-   
-        try (MemoryStack stack = stackPush()) {
-            
-            int textureWidth = cvkSwapChain.GetWidth();
-            int textureHeight = cvkSwapChain.GetHeight();
-            int requiredLayers = 1;
-                        
-            // Create destination color image            
-            cvkImage = CVKImage.Create(cvkDevice, 
-                                            textureWidth, 
-                                            textureHeight, 
-                                            requiredLayers, 
-                                            //colorFormat, // Format TODO Not sure what the format should be - look at GL version
-                                            cvkSwapChain.GetColorFormat(),
-                                            VK_IMAGE_VIEW_TYPE_2D,
-                                            VK_IMAGE_TILING_LINEAR, // Tiling
-                                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, // TODO Usage 
-                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT , // TODO - properties?
-                                            VK_IMAGE_ASPECT_COLOR_BIT,
-                                            "CVKHitTester cvkImage");  // TODO - aspect mask
-            
-            if (cvkImage == null) {
-                return 1;
-            }
-            
-            // TODO HYDRA: Might be able to just use DepthImage from Swapchain!
-            // Create depth image 
-            cvkDepthImage = CVKImage.Create(cvkDevice, 
-                                            textureWidth, 
-                                            textureHeight, 
-                                            requiredLayers, 
-                                            cvkSwapChain.GetDepthFormat(),
-                                            VK_IMAGE_VIEW_TYPE_2D,
-                                            VK_IMAGE_TILING_OPTIMAL, // Tiling or VK_IMAGE_TILING_OPTIMAL
-                                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, // TODO Usage 
-                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // TODO - properties?
-                                            VK_IMAGE_ASPECT_DEPTH_BIT,
-                                            "CVKHitTester cvkDepthImage");  // TODO - aspect mask
-            if (cvkDepthImage == null) {
-                // TODO HYDRA: If this DepthImage is required add a CVK error
-                return 1;
-            }           
+        int ret = VK_SUCCESS;   
+        int textureWidth = cvkSwapChain.GetWidth();
+        int textureHeight = cvkSwapChain.GetHeight();
+        int requiredLayers = 1;
+
+        // Create destination color image            
+        cvkImage = CVKImage.Create(cvkDevice, 
+                                        textureWidth, 
+                                        textureHeight, 
+                                        requiredLayers, 
+                                        //colorFormat, // Format TODO Not sure what the format should be - look at GL version
+                                        cvkSwapChain.GetColorFormat(),
+                                        VK_IMAGE_VIEW_TYPE_2D,
+                                        VK_IMAGE_TILING_LINEAR, // Tiling
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, // TODO Usage 
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT , // TODO - properties?
+                                        VK_IMAGE_ASPECT_COLOR_BIT,
+                                        "CVKHitTester cvkImage");  // TODO - aspect mask
+
+        if (cvkImage == null) {
+            return 1;
         }
+
+        // TODO HYDRA: Might be able to just use DepthImage from Swapchain!
+        // Create depth image 
+        cvkDepthImage = CVKImage.Create(cvkDevice, 
+                                        textureWidth, 
+                                        textureHeight, 
+                                        requiredLayers, 
+                                        cvkSwapChain.GetDepthFormat(),
+                                        VK_IMAGE_VIEW_TYPE_2D,
+                                        VK_IMAGE_TILING_OPTIMAL, // Tiling or VK_IMAGE_TILING_OPTIMAL
+                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, // TODO Usage 
+                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // TODO - properties?
+                                        VK_IMAGE_ASPECT_DEPTH_BIT,
+                                        "CVKHitTester cvkDepthImage");  // TODO - aspect mask
+        if (cvkDepthImage == null) {
+            // TODO HYDRA: If this DepthImage is required add a CVK error
+            return 1;
+        }           
         
         return ret;
     }

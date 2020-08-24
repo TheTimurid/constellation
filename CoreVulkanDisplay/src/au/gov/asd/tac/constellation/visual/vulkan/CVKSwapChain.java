@@ -117,7 +117,7 @@ import org.lwjgl.vulkan.VkSemaphoreCreateInfo;
  * resources and updating the next set before the first has been presented.
  */
 public class CVKSwapChain {
-    private CVKDevice cvkDevice;
+    private final CVKDevice cvkDevice;
     private CVKImage cvkDepthImage = null;
     private long hSwapChainHandle = VK_NULL_HANDLE;
     private long hRenderPassHandle = VK_NULL_HANDLE;
@@ -287,7 +287,7 @@ public class CVKSwapChain {
             
             // Factory that returns a SwapChainImage instance initialised with device, image handle,
             // sets default parameters and creates the Image View
-            swapChainImages.add(CVKSwapChainImage.Create(cvkDevice, swapChainImageHandle));
+            swapChainImages.add(CVKSwapChainImage.Create(cvkDevice, swapChainImageHandle, String.format("CVKSwapChainIamge %d", i)));
             swapChainImages.get(i).SetExtent(cvkDevice.GetCurrentSurfaceExtent().width(),
                     cvkDevice.GetCurrentSurfaceExtent().height());
                   
