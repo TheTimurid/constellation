@@ -56,6 +56,7 @@ import org.lwjgl.vulkan.VkRenderPassBeginInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.lwjgl.vulkan.VkViewport;
 import au.gov.asd.tac.constellation.utilities.graphics.Vector3f;
+import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT;
 import static org.lwjgl.vulkan.VK10.VK_DEPENDENCY_BY_REGION_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
@@ -76,7 +77,9 @@ import org.lwjgl.vulkan.VkMemoryBarrier;
 
 public class CVKCommandBuffer {
     private VkCommandBuffer vkCommandBuffer = null;
-    private CVKDevice cvkDevice = null;   
+    private CVKGraphLogger cvkGraphLogger = null;
+    private String DEBUGNAME;
+    private CVKGraphLogger GetLogger() { return cvkGraphLogger != null ? cvkGraphLogger : CVKGraphLogger.GetStaticLogger(); }
 
     private CVKCommandBuffer() {}
 
@@ -95,22 +98,18 @@ public class CVKCommandBuffer {
 
     public void Destroy(){        
         if (vkCommandBuffer != null) {
-            cvkDevice.VerifyInRenderThread();
+            if (CVK_DEBUGGING) {
+                --CVK_VKALLOCATIONS;
+                GetLogger().info("CVK_VKALLOCATIONS(%d-) vkFreeCommandBuffers for %s 0x%016X", 
+                        CVK_VKALLOCATIONS, DEBUGNAME, vkCommandBuffer.address());                
+            }             
             
-//            if (CVK_DEBUGGING) {
-//                --CVK_VKALLOCATIONS;
-//                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS(%d-) vkFreeCommandBuffers for %s 0x%016X", 
-//                        CVK_VKALLOCATIONS, DEBUGNAME, vkCommandBuffer.address());                
-//            }             
-            
-            vkFreeCommandBuffers(cvkDevice.GetDevice(), cvkDevice.GetCommandPoolHandle(), vkCommandBuffer);
+            vkFreeCommandBuffers(CVKDevice.GetVkDevice(), CVKDevice.GetCommandPoolHandle(), vkCommandBuffer);
             vkCommandBuffer = null;
         }
     }
     
-    public int Begin(int flags) {	
-        cvkDevice.VerifyInRenderThread();
-        
+    public int Begin(int flags) {	  
         int ret;            
         try (MemoryStack stack = stackPush()) {
             VkCommandBufferBeginInfo vkBeginInfo = VkCommandBufferBeginInfo.callocStack(stack);
@@ -132,43 +131,45 @@ public class CVKCommandBuffer {
             submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO);
             submitInfo.pCommandBuffers(stack.pointers(vkCommandBuffer));
 
-            ret = vkQueueSubmit(cvkDevice.GetQueue(), submitInfo, VK_NULL_HANDLE);
+            ret = vkQueueSubmit(CVKDevice.GetVkQueue(), submitInfo, VK_NULL_HANDLE);
             if (VkFailed(ret)) { return ret; }
-            ret = vkQueueWaitIdle(cvkDevice.GetQueue());
+            ret = vkQueueWaitIdle(CVKDevice.GetVkQueue());
         }  
         return ret;
     }
     
     public int BeginRecordSecondary(int flags, VkCommandBufferInheritanceInfo inheritanceInfo) {
-	int ret;
-        
-        VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc();
-        beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
-        beginInfo.pNext(0);
-        beginInfo.flags(flags);
-        beginInfo.pInheritanceInfo(inheritanceInfo);
+	int ret;    
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
+            beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+            beginInfo.pNext(0);
+            beginInfo.flags(flags);
+            beginInfo.pInheritanceInfo(inheritanceInfo);
 
-        ret = vkBeginCommandBuffer(vkCommandBuffer, beginInfo);
-        if (VkFailed(ret)) { return ret; }
-
-        beginInfo.free();
+            ret = vkBeginCommandBuffer(vkCommandBuffer, beginInfo);
+            if (VkFailed(ret)) { return ret; }
+        }
         
         return ret;
     }
     
     public int BeginRecordSecondary(int flags, long framebuffer, long renderPass, int subpass) {
-
-        VkCommandBufferInheritanceInfo inheritanceInfo = VkCommandBufferInheritanceInfo.calloc();
-        inheritanceInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO);
-        inheritanceInfo.pNext(0);
-        inheritanceInfo.framebuffer(framebuffer);
-        inheritanceInfo.renderPass(renderPass);
-        inheritanceInfo.subpass(subpass);
-        inheritanceInfo.occlusionQueryEnable(false);
-        inheritanceInfo.queryFlags(0);
-        inheritanceInfo.pipelineStatistics(0);
-
-        return BeginRecordSecondary(flags, inheritanceInfo);  
+        int ret;      
+        try (MemoryStack stack = stackPush()) {
+            VkCommandBufferInheritanceInfo inheritanceInfo = VkCommandBufferInheritanceInfo.callocStack(stack);
+            inheritanceInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO);
+            inheritanceInfo.pNext(0);
+            inheritanceInfo.framebuffer(framebuffer);
+            inheritanceInfo.renderPass(renderPass);
+            inheritanceInfo.subpass(subpass);
+            inheritanceInfo.occlusionQueryEnable(false);
+            inheritanceInfo.queryFlags(0);
+            inheritanceInfo.pipelineStatistics(0);
+            
+            ret = BeginRecordSecondary(flags, inheritanceInfo);  
+        }
+        return ret;
     }
 	
     public int FinishRecord() {
@@ -194,8 +195,7 @@ public class CVKCommandBuffer {
         }
         clearValues.flip();
 
-        CVKCommandBuffer.this.BeginRenderPass(renderPass, frameBuffer, width, height,
-                        contentsFlag, clearValues);
+        BeginRenderPass(renderPass, frameBuffer, width, height, contentsFlag, clearValues);
 
         clearValues.free();
     }
@@ -246,7 +246,6 @@ public class CVKCommandBuffer {
     }
 	
     public void SetScissor(VkExtent2D extent) {
-        
         try (MemoryStack stack = stackPush()) {
             VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
             scissor.offset(VkOffset2D.callocStack(stack).set(0, 0));
@@ -308,20 +307,7 @@ public class CVKCommandBuffer {
                             pipelinyLayout, 0, stack.longs(descriptorSets), null);
         }
     }
-	
-//	public void ClearColorImage(long image, int imageLayout){
-//		
-//		VkImageSubresourceRange subresourceRange = VkImageSubresourceRange.calloc()
-//				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-//				.baseMipLevel(0)
-//				.levelCount(1)
-//				.baseArrayLayer(0)
-//				.layerCount(1);
-//		
-//		vkCmdClearColorImage(vkCommandBuffer, image, imageLayout,
-//				CVKUtils.getClearColorValue(), subresourceRange);
-//	}
-//	
+    
     public void DrawIndexed(int indexCount) {
         vkCmdDrawIndexed(vkCommandBuffer, indexCount, 1, 0, 0, 0);
     }
@@ -334,54 +320,6 @@ public class CVKCommandBuffer {
                     0,              // first vert index
                     0);             // first instance index (N/A)  
     }
-//	
-//	public void Dispatch(int groupCountX, int groupCountY, int groupCountZ) {
-//		
-//		vkCmdDispatch(vkCommandBuffer, groupCountX, groupCountY, groupCountZ);
-//	}
-//	
-//	public void CopyBuffer(long srcBuffer, long dstBuffer,
-//								    long srcOffset, long dstOffset,
-//								    long size) {
-//		
-//		VkBufferCopy.Buffer copyRegion = VkBufferCopy.calloc(1)
-//					.srcOffset(srcOffset)
-//					.dstOffset(dstOffset)
-//					.size(size);
-//		
-//		vkCmdCopyBuffer(vkCommandBuffer, srcBuffer, dstBuffer, copyRegion);
-//	}
-//	
-//	public void CopyBufferToImage(long srcBuffer, long dstImage, int width, int height, int depth) {
-//		
-//		VkBufferImageCopy.Buffer copyRegion = VkBufferImageCopy.calloc(1)
-//					.bufferOffset(0)
-//					.bufferRowLength(0)
-//					.bufferImageHeight(0);
-//		
-//		VkImageSubresourceLayers subresource = VkImageSubresourceLayers.calloc()
-//					.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-//					.mipLevel(0)
-//					.baseArrayLayer(0)
-//					.layerCount(1);
-//		
-//		VkExtent3D extent = VkExtent3D.calloc()
-//					.width(width)
-//					.height(height)
-//					.depth(depth);
-//		
-//		VkOffset3D offset = VkOffset3D.calloc()
-//					.x(0)
-//					.y(0)
-//					.z(0);
-//		
-//		copyRegion.imageSubresource(subresource);
-//		copyRegion.imageExtent(extent);
-//		copyRegion.imageOffset(offset);
-//	
-//		vkCmdCopyBufferToImage(vkCommandBuffer, srcBuffer, dstImage,
-//				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copyRegion);
-//	}
 	
     public void PipelineImageMemoryBarrier(long image, int oldLayout, int newLayout,
 			int srcAccessMask, int dstAccessMask, int srcStageMask, int dstStageMask,
@@ -438,32 +376,31 @@ public class CVKCommandBuffer {
         vkResetCommandBuffer(vkCommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
     }
 	
-    public static CVKCommandBuffer Create(CVKDevice cvkDevice, int level, final String debugName) {
-        CVKAssertNotNull(cvkDevice);
-        CVKAssertNotNull(cvkDevice.GetDevice());
+    public static CVKCommandBuffer Create(int level, CVKGraphLogger graphLogger, final String debugName) {
+        CVKAssertNotNull(CVKDevice.GetVkDevice());
 
         int ret;
         CVKCommandBuffer cvkCommandBuffer = new CVKCommandBuffer();
-        cvkCommandBuffer.cvkDevice = cvkDevice;
+        cvkCommandBuffer.cvkGraphLogger   = graphLogger;
         try (MemoryStack stack = stackPush()) {
             VkCommandBufferAllocateInfo vkAllocateInfo = VkCommandBufferAllocateInfo.callocStack(stack);
             vkAllocateInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO);
-            vkAllocateInfo.commandPool(cvkDevice.GetCommandPoolHandle());
+            vkAllocateInfo.commandPool(CVKDevice.GetCommandPoolHandle());
             vkAllocateInfo.level(level);
             vkAllocateInfo.commandBufferCount(1);
 
             PointerBuffer pCommandBuffer = stack.mallocPointer(1);
-            ret = vkAllocateCommandBuffers(cvkDevice.GetDevice(), vkAllocateInfo, pCommandBuffer);
+            ret = vkAllocateCommandBuffers(CVKDevice.GetVkDevice(), vkAllocateInfo, pCommandBuffer);
             checkVKret(ret);
 
-            cvkCommandBuffer.vkCommandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), cvkDevice.GetDevice());
+            cvkCommandBuffer.vkCommandBuffer = new VkCommandBuffer(pCommandBuffer.get(0), CVKDevice.GetVkDevice());
             
-//            if (CVK_DEBUGGING) {
-//                cvkCommandBuffer.DEBUGNAME = debugName;
-//                ++CVK_VKALLOCATIONS;
-//                cvkDevice.GetLogger().info("CVK_VKALLOCATIONS(%d+) vkAllocateCommandBuffers for %s 0x%016X", 
-//                        CVK_VKALLOCATIONS, cvkCommandBuffer.DEBUGNAME, cvkCommandBuffer.vkCommandBuffer.address());                
-//            }              
+            if (CVK_DEBUGGING) {
+                cvkCommandBuffer.DEBUGNAME = debugName;
+                ++CVK_VKALLOCATIONS;
+                cvkCommandBuffer.GetLogger().info("CVK_VKALLOCATIONS(%d+) vkAllocateCommandBuffers for %s 0x%016X", 
+                        CVK_VKALLOCATIONS, cvkCommandBuffer.DEBUGNAME, cvkCommandBuffer.vkCommandBuffer.address());                
+            }              
         }
         return cvkCommandBuffer;
     }	

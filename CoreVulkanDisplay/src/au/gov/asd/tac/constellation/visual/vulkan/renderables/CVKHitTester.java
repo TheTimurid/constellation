@@ -27,7 +27,6 @@ import static au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderab
 import static au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable.CVKRenderableResourceState.CVK_RESOURCE_NEEDS_UPDATE;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKImage;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger.CVKLOGGER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNotNull;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNull;
@@ -115,6 +114,21 @@ public class CVKHitTester extends CVKRenderable {
     private CVKRenderableResourceState frameBuffersState = CVK_RESOURCE_CLEAN;
     private CVKRenderableResourceState imagesState = CVK_RESOURCE_CLEAN;
     
+    
+    // ========================> Debuggering <======================== \\
+    
+    static int counter = 0;
+    private void SaveToFile() {
+        counter++;
+        
+        if (counter % 100 == 0 ) {
+            // Debug code to write out the offscreen hittester image to file
+            String fileName = String.format("C:\\OffscreenRender_%d.png", counter);       
+            cvkImage.SaveToFile(fileName);
+        }
+    }
+    
+       
     private static boolean LOGSTATECHANGE = false;
     private void SetCommandBuffersState(final CVKRenderableResourceState state) {
         CVKAssert(!(commandBuffersState == CVK_RESOURCE_NEEDS_REBUILD && state == CVK_RESOURCE_NEEDS_UPDATE));
@@ -148,8 +162,7 @@ public class CVKHitTester extends CVKRenderable {
     }
     
     @Override
-    public int Initialise(CVKDevice cvkDevice) { 
-        this.cvkDevice = cvkDevice;  
+    public int Initialise() { 
         return VK_SUCCESS;
     }
     
@@ -214,24 +227,23 @@ public class CVKHitTester extends CVKRenderable {
         int requiredLayers = 1;
 
         // Create destination color image to render to
-        cvkImage = CVKImage.Create(cvkDevice, 
-                                        textureWidth, 
-                                        textureHeight, 
-                                        requiredLayers, 
-                                        colorFormat,            // R32 Float - we only use the Red channel for hit testing
-                                        VK_IMAGE_VIEW_TYPE_2D,
-                                        VK_IMAGE_TILING_LINEAR, // Linear Tiling so we can read it later
-                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT , // Host Visible so we can read the memory without transitioning
-                                        VK_IMAGE_ASPECT_COLOR_BIT,
-                                        "CVKHitTester cvkImage");
+        cvkImage = CVKImage.Create( textureWidth, 
+                                    textureHeight, 
+                                    requiredLayers, 
+                                    colorFormat,            // R32 Float - we only use the Red channel for hit testing
+                                    VK_IMAGE_VIEW_TYPE_2D,
+                                    VK_IMAGE_TILING_LINEAR, // Linear Tiling so we can read it later
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT , // Host Visible so we can read the memory without transitioning
+                                    VK_IMAGE_ASPECT_COLOR_BIT,
+                                    GetLogger(),
+                                    "CVKHitTester cvkImage");
         if (cvkImage == null) {
             return CVK_ERROR_HITTEST_SOURCE_IMAGE_CREATE_FAILED;
         }
 
         // Create depth image required for hittesting
-        cvkDepthImage = CVKImage.Create(cvkDevice, 
-                                        textureWidth, 
+        cvkDepthImage = CVKImage.Create(textureWidth, 
                                         textureHeight, 
                                         requiredLayers, 
                                         cvkSwapChain.GetDepthFormat(),
@@ -240,7 +252,8 @@ public class CVKHitTester extends CVKRenderable {
                                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                         VK_IMAGE_ASPECT_DEPTH_BIT,
-                                        "CVKHitTester cvkDepthImage");
+                                        GetLogger(),
+                                        "CVKHitTester cvkDepthImage");  // TODO - aspect mask
         if (cvkDepthImage == null) {
             return CVK_ERROR_HITTEST_DEPTH_IMAGE_CREATE_FAILED;
         }
@@ -283,7 +296,7 @@ public class CVKHitTester extends CVKRenderable {
             attachments.put(1, cvkDepthImage.GetImageViewHandle());
             framebufferInfo.pAttachments(attachments);
             
-            ret = vkCreateFramebuffer(cvkDevice.GetDevice(), 
+            ret = vkCreateFramebuffer(CVKDevice.GetVkDevice(), 
                                       framebufferInfo, 
                                       null, //allocation callbacks
                                       pFramebuffer);
@@ -300,9 +313,9 @@ public class CVKHitTester extends CVKRenderable {
     
     private void DestroyFrameBuffer() {
         if (hFrameBufferHandle != null) {
-            vkDestroyFramebuffer(cvkDevice.GetDevice(), hFrameBufferHandle, null);
+            vkDestroyFramebuffer(CVKDevice.GetVkDevice(), hFrameBufferHandle, null);
             hFrameBufferHandle = null;
-            CVKLOGGER.info(String.format("Destroyed frame buffer for HitTester"));
+            GetLogger().info("Destroyed frame buffer for HitTester");
         }
     }  
     
@@ -316,15 +329,15 @@ public class CVKHitTester extends CVKRenderable {
     // ========================> Command buffers <======================== \\
     
     private int CreateCommandBuffer() {       
-        CVKAssertNotNull(cvkDevice);
+        CVKAssertNotNull(CVKDevice.GetVkDevice());
         CVKAssertNull(commandBuffer);
         
         int ret = VK_SUCCESS;
              
-        commandBuffer = CVKCommandBuffer.Create(cvkDevice, VK_COMMAND_BUFFER_LEVEL_PRIMARY, "CVKHitTester CommandBuffer");
+        commandBuffer = CVKCommandBuffer.Create(VK_COMMAND_BUFFER_LEVEL_PRIMARY, GetLogger(), "CVKHitTester CommandBuffer");
         
         SetCommandBuffersState(CVK_RESOURCE_CLEAN);
-        CVKLOGGER.log(Level.INFO, "Init Command Buffer - HitTester");
+        GetLogger().info("Init Command Buffer - HitTester");
         
         return ret;
     }
@@ -366,7 +379,7 @@ public class CVKHitTester extends CVKRenderable {
     @Override
     public int DisplayUpdate() {
         int ret = VK_SUCCESS;
-        
+                
         if (imagesState == CVK_RESOURCE_NEEDS_REBUILD) {
             ret = CreateImages();
             if (VkFailed(ret)) { return ret; }  
@@ -429,12 +442,15 @@ public class CVKHitTester extends CVKRenderable {
     public int OffscreenRender(List<CVKRenderable> hitTestRenderables) {
         cvkVisualProcessor.VerifyInRenderThread();
         
-        CVKAssertNotNull(cvkDevice.GetDevice());
-        CVKAssertNotNull(cvkDevice.GetCommandPoolHandle());
+        CVKAssertNotNull(CVKDevice.GetVkDevice());
+        CVKAssertNotNull(CVKDevice.GetCommandPoolHandle());
         CVKAssertNotNull(cvkSwapChain);
-                
-        int ret = VK_SUCCESS;
         
+        int ret = VK_SUCCESS;
+        if (hitTestRenderables.isEmpty()) {
+            return ret;
+        }
+
         try (MemoryStack stack = stackPush()) {
             
             ret = commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT);
@@ -479,8 +495,6 @@ public class CVKHitTester extends CVKRenderable {
                     0, 1);                                                                              // baseMipLevel/mipLevelCount
             
             cvkImage.SetLayout(VK_IMAGE_LAYOUT_GENERAL);
-            // TODO Do we need this?
-            //vkDeviceWaitIdle(cvkDevice.GetDevice());
             commandBuffer.EndAndSubmit();
         }
               
@@ -497,14 +511,5 @@ public class CVKHitTester extends CVKRenderable {
     
     
     // ========================> Helpers <======================== \\
-    static int counter = 0;
-    private void SaveToFile() {
-        counter++;
-        
-        if (counter % 100 == 0 ) {
-            // Debug code to write out the offscreen hittester image to file
-            String fileName = String.format("C:\\OffscreenRender_%d.png", counter);       
-            cvkImage.SaveToFile(fileName);
-        }
-    }
+
 }

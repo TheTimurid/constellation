@@ -15,6 +15,9 @@
  */
 package au.gov.asd.tac.constellation.visual.vulkan.renderables;
 
+import au.gov.asd.tac.constellation.utilities.graphics.Vector4f;
+import au.gov.asd.tac.constellation.utilities.graphics.Vector4i;
+import au.gov.asd.tac.constellation.utilities.text.LabelUtilities;
 import au.gov.asd.tac.constellation.utilities.visual.VisualAccess;
 import au.gov.asd.tac.constellation.utilities.visual.VisualChange;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool;
@@ -26,9 +29,10 @@ import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.shaders.CVKShaderPlaceHolder;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger.CVKLOGGER;
+import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger;
 import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKShaderUtils;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNull;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_SHADER_COMPILATION;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_SHADER_MODULE;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.LoadFileToDirectBuffer;
@@ -36,15 +40,21 @@ import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SINT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
+import static org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX;
 import static org.lwjgl.vulkan.VK10.vkDestroyShaderModule;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferInheritanceInfo;
+import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
+import org.lwjgl.vulkan.VkVertexInputBindingDescription;
 
 /**
  * Requirements: 
@@ -72,28 +82,47 @@ public class CVKLabelsRenderable extends CVKRenderable {
     // Resources recreated with the swap chain (dependent on the image count)    
     private LongBuffer pDescriptorSets = null; 
     private List<Long> pipelines = null;
-    private List<CVKCommandBuffer> commandBuffers = null;    
+    private List<CVKCommandBuffer> displayCommandBuffers = null;    
     private List<CVKBuffer> vertexBuffers = null;   
     private List<CVKBuffer> vertexUniformBuffers = null;
     private List<CVKBuffer> geometryUniformBuffers = null;    
     private List<CVKBuffer> fragmentUniformBuffers = null;       
     
+    // Resources recreated only through user events
+    private int vertexCount = 0;
+    private CVKBuffer cvkVertexStagingBuffer = null;
+//    private CVKBuffer cvkPositionStagingBuffer = null;
+//    private CVKBuffer cvkPositionBuffer = null;    
+//    private CVKBuffer cvkVertexFlagsStagingBuffer = null;
+//    private CVKBuffer cvkVertexFlagsBuffer = null;    
+//    private long hPositionBufferView = VK_NULL_HANDLE;
+//    private long hVertexFlagsBufferView = VK_NULL_HANDLE;    
+    
     
     
     // ========================> Classes <======================== \\
     
-//    private static class Vertex {
-//        // This looks a little weird for Java, but LWJGL and JOGL both require
-//        // contiguous memory which is passed to the native GL or VK libraries.        
-//        private static final int SIZEOF = 4 * Float.BYTES + 4 * Integer.BYTES;
-//        private static final int OFFSETOF_DATA = 4 * Float.BYTES;
-//        private static final int OFFSET_BKGCLR = 0;
-//        private static final int BINDING = 0;
-//        private Vector4f backgroundIconColour = new Vector4f();
-//        private Vector4i data = new Vector4i();
-//        
-//        public Vertex() {}
-//
+    private static class Vertex {
+        // This looks a little weird for Java, but LWJGL and JOGL both require
+        // contiguous memory which is passed to the native GL or VK libraries.        
+        private static final int SIZEOF = 4 * Float.BYTES + 4 * Integer.BYTES;
+        private static final int OFFSETOF_GLYPH_DATA = 0;
+        private static final int OFFSETOF_GRAPH_DATA = 4 * Float.BYTES;        
+        private static final int BINDING = 0;
+        
+        // [0] the index of the glyph in the glyphInfoTexture
+        // [1..2] x and y offsets of this glyph from the top centre of the line of text
+        // [3] The visibility of this glyph (constant for a node, but easier to pass in the batch).
+        private Vector4f glyphLocationData = new Vector4f();
+        
+        // [0] The index of the node containg this glyph in the xyzTexture
+        // [1] The total scale of the lines and their labels up to this point (< 0 if this is a glyph in a bottom label)
+        // [2] The label number in which this glyph occurs
+        // [3] Unused        
+        private Vector4i graphLocationData = new Vector4i();
+        
+        public Vertex() {}
+
 //        public Vertex(Vector4i inData, Vector4f inColour) {
 //            data = inData;
 //            backgroundIconColour = inColour;
@@ -104,84 +133,84 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //            backgroundIconColour.a[1] = colour.getGreen();
 //            backgroundIconColour.a[2] = colour.getBlue();
 //        }
-//        
+        
 //        public void SetVertexVisibility(float visibility) {
 //            backgroundIconColour.a[3] = visibility;
 //        }
-//        
+        
 //        public void SetIconData(int mainIconIndices, int decoratorWestIconIndices, int decoratorEastIconIndices, int vertexIndex) {
 //            data.set(mainIconIndices, decoratorWestIconIndices, decoratorEastIconIndices, vertexIndex);
 //        }   
-//        
-//        public void CopyToSequentially(ByteBuffer buffer) {
-//            buffer.putFloat(backgroundIconColour.a[0]);
-//            buffer.putFloat(backgroundIconColour.a[1]);
-//            buffer.putFloat(backgroundIconColour.a[2]);
-//            buffer.putFloat(backgroundIconColour.a[3]);
-//            buffer.putInt(data.a[0]);
-//            buffer.putInt(data.a[1]);
-//            buffer.putInt(data.a[2]);
-//            buffer.putInt(data.a[3]);              
-//        }        
-//
-//        /**
-//         * A VkVertexInputBindingDescription defines the rate at which data is
-//         * consumed by vertex shader (per vertex or per instance).  
-//         * The input rate determines whether to move to the next data entry after
-//         * each vertex or after each instance.
-//         * The binding description also defines the vertex stride, the number of
-//         * bytes that must be stepped from vertex n-1 to vertex n.
-//         * 
-//         * @return Binding description for the FPS vertex type
-//         */
-//        private static VkVertexInputBindingDescription.Buffer GetBindingDescription() {
-//
-//            VkVertexInputBindingDescription.Buffer bindingDescription =
-//                    VkVertexInputBindingDescription.callocStack(1);
-//
-//            // If we bind multiple vertex buffers with different descriptions
-//            // this is the index of this description occupies in the array of
-//            // bound descriptions.
-//            bindingDescription.binding(BINDING);
-//            bindingDescription.stride(Vertex.SIZEOF);
-//            bindingDescription.inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-//
-//            return bindingDescription;
-//        }
-//        
-//        /**
-//         * A VkVertexInputAttributeDescription describes each element int the
-//         * vertex buffer.
-//         * binding:  matches the binding member of VkVertexInputBindingDescription
-//         * location: corresponds to the layout(location = #) in the vertex shader
-//         *           for this element (0 for data, 1 for bkgClr).
-//         * format:   format the shader will interpret this as.
-//         * offset:   bytes from the start of the vertex this attribute starts at
-//         * 
-//         * @return 
-//         */
-//        private static VkVertexInputAttributeDescription.Buffer GetAttributeDescriptions() {
-//
-//            VkVertexInputAttributeDescription.Buffer attributeDescriptions =
-//                    VkVertexInputAttributeDescription.callocStack(2);
-//
-//            // backgroundIconColor
-//            VkVertexInputAttributeDescription posDescription = attributeDescriptions.get(0);
-//            posDescription.binding(BINDING);
-//            posDescription.location(0);
-//            posDescription.format(VK_FORMAT_R32G32B32A32_SFLOAT);
-//            posDescription.offset(OFFSET_BKGCLR);
-//
-//            // data
-//            VkVertexInputAttributeDescription colorDescription = attributeDescriptions.get(1);
-//            colorDescription.binding(BINDING);
-//            colorDescription.location(1);
-//            colorDescription.format(VK_FORMAT_R32G32B32A32_SINT);
-//            colorDescription.offset(OFFSETOF_DATA);
-//
-//            return attributeDescriptions.rewind();
-//        }
-//    }  
+        
+        public void CopyToSequentially(ByteBuffer buffer) {
+            buffer.putFloat(glyphLocationData.a[0]);
+            buffer.putFloat(glyphLocationData.a[1]);
+            buffer.putFloat(glyphLocationData.a[2]);
+            buffer.putFloat(glyphLocationData.a[3]);
+            buffer.putInt(graphLocationData.a[0]);
+            buffer.putInt(graphLocationData.a[1]);
+            buffer.putInt(graphLocationData.a[2]);
+            buffer.putInt(graphLocationData.a[3]);              
+        }        
+
+        /**
+         * A VkVertexInputBindingDescription defines the rate at which data is
+         * consumed by vertex shader (per vertex or per instance).  
+         * The input rate determines whether to move to the next data entry after
+         * each vertex or after each instance.
+         * The binding description also defines the vertex stride, the number of
+         * bytes that must be stepped from vertex n-1 to vertex n.
+         * 
+         * @return Binding description for the FPS vertex type
+         */
+        private static VkVertexInputBindingDescription.Buffer GetBindingDescription() {
+
+            VkVertexInputBindingDescription.Buffer bindingDescription =
+                    VkVertexInputBindingDescription.callocStack(1);
+
+            // If we bind multiple vertex buffers with different descriptions
+            // this is the index of this description occupies in the array of
+            // bound descriptions.
+            bindingDescription.binding(BINDING);
+            bindingDescription.stride(Vertex.SIZEOF);
+            bindingDescription.inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+
+            return bindingDescription;
+        }
+        
+        /**
+         * A VkVertexInputAttributeDescription describes each element int the
+         * vertex buffer.
+         * binding:  matches the binding member of VkVertexInputBindingDescription
+         * location: corresponds to the layout(location = #) in the vertex shader
+         *           for this element (0 for data, 1 for bkgClr).
+         * format:   format the shader will interpret this as.
+         * offset:   bytes from the start of the vertex this attribute starts at
+         * 
+         * @return 
+         */
+        private static VkVertexInputAttributeDescription.Buffer GetAttributeDescriptions() {
+
+            VkVertexInputAttributeDescription.Buffer attributeDescriptions =
+                    VkVertexInputAttributeDescription.callocStack(2);
+
+            // glyphLocationData
+            VkVertexInputAttributeDescription posDescription = attributeDescriptions.get(0);
+            posDescription.binding(BINDING);
+            posDescription.location(0);
+            posDescription.format(VK_FORMAT_R32G32B32A32_SFLOAT);
+            posDescription.offset(OFFSETOF_GLYPH_DATA);
+
+            // graphLocationData
+            VkVertexInputAttributeDescription colorDescription = attributeDescriptions.get(1);
+            colorDescription.binding(BINDING);
+            colorDescription.location(1);
+            colorDescription.format(VK_FORMAT_R32G32B32A32_SINT);
+            colorDescription.offset(OFFSETOF_GRAPH_DATA);
+
+            return attributeDescriptions.rewind();
+        }
+    }  
 //    
 //    private static class Position {
 //        private static final int SIZEOF = 2 * 4 * Float.BYTES;
@@ -270,7 +299,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
             if (vsBytes == null) {
                 vsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/NodeLabel.vs.spv");
                 if (vsBytes == null) {
-                    CVKLOGGER.log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: NodeLabel.vs.spv");
+                    CVKGraphLogger.GetStaticLogger().log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: NodeLabel.vs.spv");
                     return CVK_ERROR_SHADER_COMPILATION;
                 }
             }
@@ -278,7 +307,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
             if (gsBytes == null) {
                 gsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/Label.gs.spv");
                 if (gsBytes == null) {
-                    CVKLOGGER.log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: Label.gs.spv");
+                    CVKGraphLogger.GetStaticLogger().log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: Label.gs.spv");
                     return CVK_ERROR_SHADER_COMPILATION;
                 }
             }
@@ -286,13 +315,13 @@ public class CVKLabelsRenderable extends CVKRenderable {
             if (fsBytes == null) {
                 fsBytes = LoadFileToDirectBuffer(CVKShaderPlaceHolder.class, "compiled/Label.fs.spv");
                 if (fsBytes == null) {
-                    CVKLOGGER.log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: Label.fs.spv");
+                    CVKGraphLogger.GetStaticLogger().log(Level.SEVERE, "Failed to load precompiled CVKLabelsRenderable shader: Label.fs.spv");
                     return CVK_ERROR_SHADER_COMPILATION;
                 }
             }
          
         } catch (IOException e) {
-            CVKLOGGER.log(Level.SEVERE, "Failed to compile CVKLabelsRenderable shaders: {0}", e.toString());
+            CVKGraphLogger.GetStaticLogger().log(Level.SEVERE, "Failed to compile CVKLabelsRenderable shaders: {0}", e.toString());
             ret = CVK_ERROR_SHADER_COMPILATION;
         }
         
@@ -339,17 +368,17 @@ public class CVKLabelsRenderable extends CVKRenderable {
         int ret = VK_SUCCESS;
         
         try{           
-            hVertexShaderModule = CVKShaderUtils.CreateShaderModule(vsBytes, cvkDevice.GetDevice());
+            hVertexShaderModule = CVKShaderUtils.CreateShaderModule(vsBytes, CVKDevice.GetVkDevice());
             if (hVertexShaderModule == VK_NULL_HANDLE) {
                 cvkVisualProcessor.GetLogger().log(Level.SEVERE, "Failed to create shader module for: NodeLabel.vs");
                 return CVK_ERROR_SHADER_MODULE;
             }
-            hGeometryShaderModule = CVKShaderUtils.CreateShaderModule(gsBytes, cvkDevice.GetDevice());
+            hGeometryShaderModule = CVKShaderUtils.CreateShaderModule(gsBytes, CVKDevice.GetVkDevice());
             if (hGeometryShaderModule == VK_NULL_HANDLE) {
                 cvkVisualProcessor.GetLogger().log(Level.SEVERE, "Failed to create shader module for: Label.gs");
                 return CVK_ERROR_SHADER_MODULE;
             }
-            hFragmentShaderModule = CVKShaderUtils.CreateShaderModule(fsBytes, cvkDevice.GetDevice());
+            hFragmentShaderModule = CVKShaderUtils.CreateShaderModule(fsBytes, CVKDevice.GetVkDevice());
             if (hFragmentShaderModule == VK_NULL_HANDLE) {
                 cvkVisualProcessor.GetLogger().log(Level.SEVERE, "Failed to create shader module for: Label.fs");
                 return CVK_ERROR_SHADER_MODULE;
@@ -367,15 +396,15 @@ public class CVKLabelsRenderable extends CVKRenderable {
     
     private void DestroyShaderModules() {
         if (hVertexShaderModule != VK_NULL_HANDLE) {
-            vkDestroyShaderModule(cvkDevice.GetDevice(), hVertexShaderModule, null);
+            vkDestroyShaderModule(CVKDevice.GetVkDevice(), hVertexShaderModule, null);
             hVertexShaderModule = VK_NULL_HANDLE;
         }
         if (hGeometryShaderModule != VK_NULL_HANDLE) {
-            vkDestroyShaderModule(cvkDevice.GetDevice(), hGeometryShaderModule, null);
+            vkDestroyShaderModule(CVKDevice.GetVkDevice(), hGeometryShaderModule, null);
             hGeometryShaderModule = VK_NULL_HANDLE;
         }
         if (hFragmentShaderModule != VK_NULL_HANDLE) {
-            vkDestroyShaderModule(cvkDevice.GetDevice(), hFragmentShaderModule, null);
+            vkDestroyShaderModule(CVKDevice.GetVkDevice(), hFragmentShaderModule, null);
             hFragmentShaderModule = VK_NULL_HANDLE;
         }
     }
@@ -399,14 +428,12 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //    }
     
     @Override
-    public int Initialise(CVKDevice cvkDevice) {
-        CVKAssert(cvkDevice != null);
+    public int Initialise() {
         // Check for double initialisation
-        CVKAssert(hVertexShaderModule == VK_NULL_HANDLE);
+        CVKAssertNull(hVertexShaderModule);
 //        CVKAssert(hDescriptorLayout == VK_NULL_HANDLE);
         
         int ret;        
-        this.cvkDevice = cvkDevice;
         
         ret = CreateShaderModules();
         if (VkFailed(ret)) { return ret; }             
@@ -476,7 +503,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //        CVKAssert(fragmentUniformBuffers == null); 
 //        CVKAssert(pDescriptorSets == null);
 //        CVKAssert(hDescriptorLayout == VK_NULL_HANDLE);  
-//        CVKAssert(commandBuffers == null);        
+//        CVKAssert(displayCommandBuffers == null);        
 //        CVKAssert(pipelines == null);
 //        CVKAssert(hPipelineLayout == VK_NULL_HANDLE);    
 //        CVKAssert(hVertexShaderModule == VK_NULL_HANDLE);
@@ -657,12 +684,12 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //        PointerBuffer pData = stack.mallocPointer(1);        
 //        
 //        // Map staging buffer into host (CPU) rw memory and copy our UBO into it
-//        ret = vkMapMemory(cvkDevice.GetDevice(), cvkVertexUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
+//        ret = vkMapMemory(cvkDevice.GetVkDevice(), cvkVertexUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
 //        if (VkFailed(ret)) { return ret; }
 //        {
 //            vertexUBO.CopyTo(pData.getByteBuffer(0, size));
 //        }
-//        vkUnmapMemory(cvkDevice.GetDevice(), cvkVertexUBStagingBuffer.GetMemoryBufferHandle());   
+//        vkUnmapMemory(cvkDevice.GetVkDevice(), cvkVertexUBStagingBuffer.GetMemoryBufferHandle());   
 //     
 //        // Copy the staging buffer into the uniform buffer on the device
 //        final int imageCount = cvkSwapChain.GetImageCount(); 
@@ -721,12 +748,12 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //        PointerBuffer pData = stack.mallocPointer(1);        
 //        
 //        // Map staging buffer into host (CPU) rw memory and copy our UBO into it
-//        ret = vkMapMemory(cvkDevice.GetDevice(), cvkGeometryUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
+//        ret = vkMapMemory(cvkDevice.GetVkDevice(), cvkGeometryUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
 //        if (VkFailed(ret)) { return ret; }
 //        {
 //            geometryUBO.CopyTo(pData.getByteBuffer(0, size));
 //        }
-//        vkUnmapMemory(cvkDevice.GetDevice(), cvkGeometryUBStagingBuffer.GetMemoryBufferHandle());   
+//        vkUnmapMemory(cvkDevice.GetVkDevice(), cvkGeometryUBStagingBuffer.GetMemoryBufferHandle());   
 //     
 //        // Copy the staging buffer into the uniform buffer on the device
 //        final int imageCount = cvkSwapChain.GetImageCount(); 
@@ -779,12 +806,12 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //        PointerBuffer pData = stack.mallocPointer(1);        
 //        
 //        // Map staging buffer into host (CPU) rw memory and copy our UBO into it
-//        ret = vkMapMemory(cvkDevice.GetDevice(), cvkFragmentUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
+//        ret = vkMapMemory(cvkDevice.GetVkDevice(), cvkFragmentUBStagingBuffer.GetMemoryBufferHandle(), 0, size, 0, pData);
 //        if (VkFailed(ret)) { return ret; }
 //        {
 //            fragmentUBO.CopyTo(pData.getByteBuffer(0, size));
 //        }
-//        vkUnmapMemory(cvkDevice.GetDevice(), cvkFragmentUBStagingBuffer.GetMemoryBufferHandle());   
+//        vkUnmapMemory(cvkDevice.GetVkDevice(), cvkFragmentUBStagingBuffer.GetMemoryBufferHandle());   
 //     
 //        // Copy the staging buffer into the uniform buffer on the device
 //        final int imageCount = cvkSwapChain.GetImageCount(); 
@@ -815,12 +842,12 @@ public class CVKLabelsRenderable extends CVKRenderable {
         int ret = VK_SUCCESS;
 //        int imageCount = cvkSwapChain.GetImageCount();
 //        
-//        commandBuffers = new ArrayList<>(imageCount);
+//        displayCommandBuffers = new ArrayList<>(imageCount);
 //
 //        for (int i = 0; i < imageCount; ++i) {
 //            CVKCommandBuffer buffer = CVKCommandBuffer.Create(cvkDevice, 
 //                    VK_COMMAND_BUFFER_LEVEL_SECONDARY, String.format("CVKIconsRenderable %d", i));
-//            commandBuffers.add(buffer);
+//            displayCommandBuffers.add(buffer);
 //        }
 //        
 //        SetCommandBuffersState(CVK_RESOURCE_CLEAN);
@@ -830,14 +857,14 @@ public class CVKLabelsRenderable extends CVKRenderable {
     
     @Override
     public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) {
-        return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
+        return displayCommandBuffers.get(imageIndex).GetVKCommandBuffer(); 
     }       
     
     @Override
     public int RecordDisplayCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int imageIndex){
         return VK_SUCCESS;
 //        cvkVisualProcessor.VerifyInRenderThread();
-//        CVKAssert(cvkDevice.GetDevice() != null);
+//        CVKAssert(cvkDevice.GetVkDevice() != null);
 //        CVKAssert(cvkDevice.GetCommandPoolHandle() != VK_NULL_HANDLE);
 //        CVKAssert(cvkSwapChain != null);
 //                
@@ -900,10 +927,10 @@ public class CVKLabelsRenderable extends CVKRenderable {
     }       
     
     private void DestroyCommandBuffers() {         
-//        if (null != commandBuffers) {
-//            commandBuffers.forEach(el -> {el.Destroy();});
-//            commandBuffers.clear();
-//            commandBuffers = null;
+//        if (null != displayCommandBuffers) {
+//            displayCommandBuffers.forEach(el -> {el.Destroy();});
+//            displayCommandBuffers.clear();
+//            displayCommandBuffers = null;
 //        }      
     }        
     
@@ -970,7 +997,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //
 //            LongBuffer pDescriptorSetLayout = stack.mallocLong(1);
 //
-//            ret = vkCreateDescriptorSetLayout(cvkDevice.GetDevice(), layoutInfo, null, pDescriptorSetLayout);
+//            ret = vkCreateDescriptorSetLayout(cvkDevice.GetVkDevice(), layoutInfo, null, pDescriptorSetLayout);
 //            if (VkSucceeded(ret)) {
 //                hDescriptorLayout = pDescriptorSetLayout.get(0);
 //            }
@@ -979,7 +1006,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
     }      
     
     private void DestroyDescriptorLayout() {
-//        vkDestroyDescriptorSetLayout(cvkDevice.GetDevice(), hDescriptorLayout, null);
+//        vkDestroyDescriptorSetLayout(cvkDevice.GetVkDevice(), hDescriptorLayout, null);
 //        hDescriptorLayout = VK_NULL_HANDLE;
     }
     
@@ -1004,7 +1031,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //
 //        // Allocate the descriptor sets from the descriptor pool, they'll be unitialised
 //        pDescriptorSets = MemoryUtil.memAllocLong(imageCount);
-//        ret = vkAllocateDescriptorSets(cvkDevice.GetDevice(), allocInfo, pDescriptorSets);
+//        ret = vkAllocateDescriptorSets(cvkDevice.GetVkDevice(), allocInfo, pDescriptorSets);
 //        if (VkFailed(ret)) { return ret; }
         
         return UpdateDescriptorSets(stack);
@@ -1143,7 +1170,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //            descriptorWrites.forEach(el -> {el.dstSet(descriptorSet);});
 //
 //            // Update the descriptors with a write and no copy
-//            vkUpdateDescriptorSets(cvkDevice.GetDevice(), descriptorWrites, null);
+//            vkUpdateDescriptorSets(cvkDevice.GetVkDevice(), descriptorWrites, null);
 //        }
 //        
 //        // Cache atlas handles so we know when to recreate descriptors
@@ -1164,7 +1191,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //            cvkVisualProcessor.GetLogger().fine("CVKIconsRenderable returning %d descriptor sets to the pool", pDescriptorSets.capacity());
 //            
 //            // After calling vkFreeDescriptorSets, all descriptor sets in pDescriptorSets are invalid.
-//            ret = vkFreeDescriptorSets(cvkDevice.GetDevice(), cvkDescriptorPool.GetDescriptorPoolHandle(), pDescriptorSets);
+//            ret = vkFreeDescriptorSets(cvkDevice.GetVkDevice(), cvkDescriptorPool.GetDescriptorPoolHandle(), pDescriptorSets);
 //            pDescriptorSets = null;
 //            checkVKret(ret);
 //        }
@@ -1215,7 +1242,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
     
 //    private int CreatePipelineLayout() {
 //        CVKAssert(cvkDevice != null);
-//        CVKAssert(cvkDevice.GetDevice() != null);
+//        CVKAssert(cvkDevice.GetVkDevice() != null);
 //        CVKAssert(hDescriptorLayout != VK_NULL_HANDLE);
 //               
 //        int ret;       
@@ -1224,7 +1251,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //            pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
 //            pipelineLayoutInfo.pSetLayouts(stack.longs(hDescriptorLayout));
 //            LongBuffer pPipelineLayout = stack.longs(VK_NULL_HANDLE);
-//            ret = vkCreatePipelineLayout(cvkDevice.GetDevice(), pipelineLayoutInfo, null, pPipelineLayout);
+//            ret = vkCreatePipelineLayout(cvkDevice.GetVkDevice(), pipelineLayoutInfo, null, pPipelineLayout);
 //            if (VkFailed(ret)) { return ret; }
 //            hPipelineLayout = pPipelineLayout.get(0);
 //            CVKAssert(hPipelineLayout != VK_NULL_HANDLE);                
@@ -1235,7 +1262,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //    private int CreatePipelines() {
 //        CVKAssert(hPipelineLayout != VK_NULL_HANDLE);
 //        CVKAssert(cvkDevice != null);
-//        CVKAssert(cvkDevice.GetDevice() != null);
+//        CVKAssert(cvkDevice.GetVkDevice() != null);
 //        CVKAssert(cvkSwapChain != null);
 //        CVKAssert(cvkDescriptorPool != null);
 //        CVKAssert(cvkSwapChain.GetSwapChainHandle() != VK_NULL_HANDLE);
@@ -1404,7 +1431,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //                pipelineInfo.pDynamicState(dynamicState);
 //
 //                LongBuffer pGraphicsPipeline = stack.mallocLong(1);
-//                ret = vkCreateGraphicsPipelines(cvkDevice.GetDevice(), 
+//                ret = vkCreateGraphicsPipelines(cvkDevice.GetVkDevice(), 
 //                                                VK_NULL_HANDLE, 
 //                                                pipelineInfo, 
 //                                                null, 
@@ -1423,7 +1450,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //    private void DestroyPipelines() {
 //        if (pipelines != null) {
 //            for (int i = 0; i < pipelines.size(); ++i) {
-//                vkDestroyPipeline(cvkDevice.GetDevice(), pipelines.get(i), null);
+//                vkDestroyPipeline(cvkDevice.GetVkDevice(), pipelines.get(i), null);
 //                pipelines.set(i, VK_NULL_HANDLE);
 //            }
 //            pipelines.clear();
@@ -1433,7 +1460,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //    
 //    private void DestroyPipelineLayout() {
 //        if (hPipelineLayout != VK_NULL_HANDLE) {
-//            vkDestroyPipelineLayout(cvkDevice.GetDevice(), hPipelineLayout, null);
+//            vkDestroyPipelineLayout(cvkDevice.GetVkDevice(), hPipelineLayout, null);
 //            hPipelineLayout = VK_NULL_HANDLE;
 //        }
 //    }      
@@ -1556,24 +1583,60 @@ public class CVKLabelsRenderable extends CVKRenderable {
     
     // ========================> Tasks <======================== \\
     
+    private Vertex[] BuildVertexArray(final VisualAccess access, int first, int last) {
+        final int newVertexCount = (last - first) + 1;
+        if (newVertexCount > 0) {
+            Vertex vertices[] = new Vertex[newVertexCount];            
+            for (int pos = first; pos <= last; ++pos) {
+                final float visibility = access.getVertexVisibility(pos);            
+                vertices[pos] = new Vertex();
+                Vertex vertex = vertices[pos];
+                
+                for (int label = 0; label < access.getTopLabelCount(); label++) {
+                    final String text = access.getVertexTopLabelText(pos, label);
+                    ArrayList<String> lines = LabelUtilities.splitTextIntoLines(text);
+                    
+//                    for (final String line : lines) {
+//                        setCurrentContext(pos, totalScale, visibility, label);
+//                        SharedDrawable.getGlyphManager().renderTextAsLigatures(line, this);
+//                        totalScale += labelTopInfoReference.get(label, 3);
+//                    }                    
+                }
+                
+            }            
+            
+//        
+//        int totalScale = LabelUtilities.NRADIUS_TO_LABEL_UNITS;
+//        for (int label = 0; label < access.getTopLabelCount(); label++) {
+//            final String text = access.getVertexTopLabelText(pos, label);
+//            ArrayList<String> lines = LabelUtilities.splitTextIntoLines(text);
+//            Collections.reverse(lines);
+
+//        }            
+            
+            return vertices;
+        } else {
+            return null;
+        } 
+    }  
+        
+    
     public CVKRenderUpdateTask TaskUpdateLabels(final VisualChange change, final VisualAccess access) {
         //=== EXECUTED BY CALLING THREAD (VisualProcessor) ===//
         cvkVisualProcessor.GetLogger().fine("TaskUpdateLabels frame %d: %d verts", cvkVisualProcessor.GetFrameNumber(), access.getVertexCount());
         
-        // If we have had an update task called before a rebuild task we first have to build
-        // the staging buffer.  Rebuild also if we our vertex count has somehow changed.
-//        final boolean rebuildRequired = cvkVertexStagingBuffer == null || 
-//                                        access.getVertexCount() * Vertex.SIZEOF != cvkVertexStagingBuffer.GetBufferSize() || 
-//                                        change.isEmpty();
-//        final int changedVerticeRange[];
-//        final Vertex vertices[];
-//        if (rebuildRequired) {
-//            vertices = BuildVertexArray(access, 0, access.getVertexCount() - 1);
-//            changedVerticeRange = null;
-//        } else {
-//            changedVerticeRange = change.getRange();
-//            vertices = BuildVertexArray(access, changedVerticeRange[0], changedVerticeRange[1]);         
-//        }
+        final boolean rebuildRequired = cvkVertexStagingBuffer == null || 
+                                        access.getVertexCount() * Vertex.SIZEOF != cvkVertexStagingBuffer.GetBufferSize() || 
+                                        change.isEmpty();
+        final int changedVerticeRange[];
+        final Vertex vertices[];
+        if (rebuildRequired) {
+            vertices = BuildVertexArray(access, 0, access.getVertexCount() - 1);
+            changedVerticeRange = null;
+        } else {
+            changedVerticeRange = change.getRange();
+            vertices = BuildVertexArray(access, changedVerticeRange[0], changedVerticeRange[1]);         
+        }
         
         //=== EXECUTED BY RENDER THREAD (during CVKVisualProcessor.ProcessRenderTasks) ===//
         return () -> {
