@@ -207,7 +207,7 @@ public class CVKIconTextureAtlas extends CVKRenderable {
     // ========================> Command buffers <======================== \\
     
     @Override
-    public VkCommandBuffer GetCommandBuffer(int imageIndex) { return null; }        
+    public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) { return null; }        
      
     @Override
     public int RecordDisplayCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int index){ return VK_SUCCESS; }

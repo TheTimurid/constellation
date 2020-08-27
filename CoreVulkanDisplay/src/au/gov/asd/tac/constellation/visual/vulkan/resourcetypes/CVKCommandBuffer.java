@@ -33,14 +33,11 @@ import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.system.MemoryStack.stackPush;
-import static org.lwjgl.system.MemoryUtil.memAllocLong;
-import static org.lwjgl.system.MemoryUtil.memFree;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_COMPUTE;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_SUBMIT_INFO;
-import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkCmdBeginRenderPass;
 import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers;
@@ -59,25 +56,27 @@ import org.lwjgl.vulkan.VkRenderPassBeginInfo;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import org.lwjgl.vulkan.VkViewport;
 import au.gov.asd.tac.constellation.utilities.graphics.Vector3f;
+import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT;
 import static org.lwjgl.vulkan.VK10.VK_DEPENDENCY_BY_REGION_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_INDEX_TYPE_UINT32;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+import static org.lwjgl.vulkan.VK10.vkCmdBindIndexBuffer;
 import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
+import static org.lwjgl.vulkan.VK10.vkCmdDraw;
+import static org.lwjgl.vulkan.VK10.vkCmdDrawIndexed;
 import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
+import static org.lwjgl.vulkan.VK10.vkResetCommandBuffer;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryBarrier;
 
 
 public class CVKCommandBuffer {
     private VkCommandBuffer vkCommandBuffer = null;
-    private CVKDevice cvkDevice = null;
-    
-    //TODO: REMOVE THIS
-    public String DEBUGNAME = "";
-
+    private CVKDevice cvkDevice = null;   
 
     private CVKCommandBuffer() {}
 
@@ -125,7 +124,7 @@ public class CVKCommandBuffer {
     
     public int EndAndSubmit() {
         int ret;
-        try(MemoryStack stack = stackPush()) {
+        try (MemoryStack stack = stackPush()) {
             ret = vkEndCommandBuffer(vkCommandBuffer);
             if (VkFailed(ret)) { return ret; }
 
@@ -140,23 +139,24 @@ public class CVKCommandBuffer {
         return ret;
     }
     
-    public void BeginRecordSecondary(int flags, VkCommandBufferInheritanceInfo inheritanceInfo) {
-	VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc();
+    public int BeginRecordSecondary(int flags, VkCommandBufferInheritanceInfo inheritanceInfo) {
+	int ret;
+        
+        VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.calloc();
         beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
         beginInfo.pNext(0);
         beginInfo.flags(flags);
         beginInfo.pInheritanceInfo(inheritanceInfo);
 
-        int err = vkBeginCommandBuffer(vkCommandBuffer, beginInfo);
-
-        if (err != VK_SUCCESS) {
-                throw new AssertionError("Failed to begin record command buffer: ");
-        }
+        ret = vkBeginCommandBuffer(vkCommandBuffer, beginInfo);
+        if (VkFailed(ret)) { return ret; }
 
         beginInfo.free();
+        
+        return ret;
     }
     
-    public void BeginRecordSecondary(int flags, long framebuffer, long renderPass, int subpass) {
+    public int BeginRecordSecondary(int flags, long framebuffer, long renderPass, int subpass) {
 
         VkCommandBufferInheritanceInfo inheritanceInfo = VkCommandBufferInheritanceInfo.calloc();
         inheritanceInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO);
@@ -168,65 +168,43 @@ public class CVKCommandBuffer {
         inheritanceInfo.queryFlags(0);
         inheritanceInfo.pipelineStatistics(0);
 
-        BeginRecordSecondary(flags, inheritanceInfo);
-        
+        return BeginRecordSecondary(flags, inheritanceInfo);  
     }
 	
-    public void FinishRecord(){
+    public int FinishRecord() {
+        int ret;
 
-        int err = vkEndCommandBuffer(vkCommandBuffer);
+        ret = vkEndCommandBuffer(vkCommandBuffer);
+        if (VkFailed(ret)) { return ret; }
 
-        if (err != VK_SUCCESS) {
-            throw new AssertionError("Failed to finish record command buffer: ");
+        return ret;
+    }
+	
+    public void BeginRenderPass(long renderPass, long frameBuffer,
+                    int width, int height, int colorAttachmentCount, int depthAttachment,
+                    int contentsFlag) {
+
+        VkClearValue.Buffer clearValues = VkClearValue.calloc(colorAttachmentCount + depthAttachment);
+
+        for (int i=0; i<colorAttachmentCount; i++) {
+            clearValues.put(CVKUtils.getClearValueColor(new Vector3f(0,0,0)));
         }
+        if (depthAttachment == 1) {
+            clearValues.put(CVKUtils.getClearValueDepth());
+        }
+        clearValues.flip();
+
+        CVKCommandBuffer.this.BeginRenderPass(renderPass, frameBuffer, width, height,
+                        contentsFlag, clearValues);
+
+        clearValues.free();
     }
 	
-	public void beginRenderPassCmd(long renderPass, long frameBuffer,
-			int width, int height, int colorAttachmentCount, int depthAttachment,
-			int contentsFlag){
-		
-		VkClearValue.Buffer clearValues = VkClearValue.calloc(
-				colorAttachmentCount + depthAttachment);
-		
-		for (int i=0; i<colorAttachmentCount; i++){
-			clearValues.put(CVKUtils.getClearValueColor(new Vector3f(0,0,0)));
-		}
-		if (depthAttachment == 1){
-			clearValues.put(CVKUtils.getClearValueDepth());
-		}
-		clearValues.flip();
-		
-		beginRenderPassCmd(renderPass, frameBuffer, width, height,
-				contentsFlag, clearValues);
-		
-		clearValues.free();
-	}
-//	
-//	public void beginRenderPassCmd(long renderPass, long frameBuffer,
-//			int width, int height, int colorAttachmentCount, int depthAttachment,
-//			int contentsFlag, Vec3f clearColor){
-//		
-//		VkClearValue.Buffer clearValues = VkClearValue.calloc(
-//				colorAttachmentCount + depthAttachment);
-//		
-//		for (int i=0; i<colorAttachmentCount; i++){
-//			clearValues.put(CVKUtils.getClearValueColor(clearColor));
-//		}
-//		if (depthAttachment == 1){
-//			clearValues.put(CVKUtils.getClearValueDepth());
-//		}
-//		clearValues.flip();
-//		
-//		beginRenderPassCmd(renderPass, frameBuffer, width, height,
-//				contentsFlag, clearValues);
-//		
-//		clearValues.free();
-//	}
-//	
-	private void beginRenderPassCmd(long renderPass, long frameBuffer,
-			int width, int height, int flags, VkClearValue.Buffer clearValues){
-		
-            VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.calloc();
+    private void BeginRenderPass(long renderPass, long frameBuffer,
+                    int width, int height, int flags, VkClearValue.Buffer clearValues) {
+
+        try (MemoryStack stack = stackPush()) {
+            VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.callocStack(stack);
             renderPassBeginInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
             renderPassBeginInfo.pNext(0);
             renderPassBeginInfo.renderPass(renderPass);
@@ -238,103 +216,100 @@ public class CVKCommandBuffer {
             renderArea.extent().set(width, height);
 
             vkCmdBeginRenderPass(vkCommandBuffer, renderPassBeginInfo, flags);
-
-            renderPassBeginInfo.free();
-	}
+        }
+    }
+    
+    public void EndRenderPass(){
+        vkCmdEndRenderPass(vkCommandBuffer);
+    }
 	
-	public void endRenderPassCmd(){
-		
-	    vkCmdEndRenderPass(vkCommandBuffer);
-	}
+    public void BindComputePipeline(long pipeline) {
+        vkCmdBindPipeline(vkCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    }
 	
-	public void BindComputePipelineCmd(long pipeline){
-		
-	    vkCmdBindPipeline(vkCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-	}
+    public void BindGraphicsPipeline(long pipeline) {
+        vkCmdBindPipeline(vkCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    }
 	
-	public void BindGraphicsPipelineCmd(long pipeline){
-		
-	    vkCmdBindPipeline(vkCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-	}
-	
-	public void viewPortCmd(int width, int height, MemoryStack stack){
-		
-	    VkViewport.Buffer viewport = VkViewport.callocStack(1, stack);
+    public void SetViewPort(int width, int height) {
+        try (MemoryStack stack = stackPush()) {
+            VkViewport.Buffer viewport = VkViewport.callocStack(1, stack);
             viewport.x(0.0f);
             viewport.y(0.0f);
             viewport.width(width);
             viewport.height(height);
             viewport.minDepth(0.0f);
             viewport.maxDepth(1.0f);
-            
+
             vkCmdSetViewport(vkCommandBuffer, 0, viewport);
-	}
+        }
+    }
 	
-	public void scissorCmd(VkExtent2D extent, MemoryStack stack){
-		
-	    VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
+    public void SetScissor(VkExtent2D extent) {
+        
+        try (MemoryStack stack = stackPush()) {
+            VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
             scissor.offset(VkOffset2D.callocStack(stack).set(0, 0));
             scissor.extent(extent);
 
             vkCmdSetScissor(vkCommandBuffer, 0, scissor);
-	}
+        }
+    }
 	
-	public void pushConstantsCmd(long pipelineLayout, int stageFlags, ByteBuffer data){
-		
-		vkCmdPushConstants(vkCommandBuffer, // The buffer to push the matrix to
-				pipelineLayout,     // The pipeline layout
-				stageFlags,         // Flags
-				0,                  // Offset
-				data);              // Push constant data
-	}
-//	
-//	public void bindVertexInputCmd(long vertexBuffer, long indexBuffer){
-//		
-//		LongBuffer offsets = memAllocLong(1);
-//		offsets.put(0, 0L);
-//		LongBuffer pVertexBuffers = memAllocLong(1);
-//		pVertexBuffers.put(0, vertexBuffer);
-//		
-//		vkCmdBindVertexBuffers(vkCommandBuffer, 0, pVertexBuffers, offsets);
-//		vkCmdBindIndexBuffer(vkCommandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-//		
-//		memFree(pVertexBuffers);
-//		memFree(offsets);
-//	}
-//	
-	public void bindVertexInputCmd(long vertexBuffer){
-		
-		LongBuffer offsets = memAllocLong(1);
-		offsets.put(0, 0L);
-		LongBuffer pVertexBuffers = memAllocLong(1);
-		pVertexBuffers.put(0, vertexBuffer);
-		
-		vkCmdBindVertexBuffers(vkCommandBuffer, 0, pVertexBuffers, offsets);
-		
-		memFree(pVertexBuffers);
-		memFree(offsets);
-	}
-	
-	public void bindComputeDescriptorSetsCmd(long pipelinyLayout, long[] descriptorSets){
+    public void PushConstants(long pipelineLayout, int stageFlags, int offset, ByteBuffer data) {
 
-		bindDescriptorSetsCmd(pipelinyLayout, descriptorSets,
-				VK_PIPELINE_BIND_POINT_COMPUTE);
-	}
-//	
-//	public void bindGraphicsDescriptorSetsCmd(long pipelinyLayout, long[] descriptorSets){
-//		
-//		bindDescriptorSetsCmd(pipelinyLayout, descriptorSets,
-//				VK_PIPELINE_BIND_POINT_GRAPHICS);
-//	}
-//	
-	private void bindDescriptorSetsCmd(long pipelinyLayout, long[] descriptorSets,
-			int pipelineBindPoint){
-		
-		vkCmdBindDescriptorSets(vkCommandBuffer, pipelineBindPoint,
-				pipelinyLayout, 0, descriptorSets, null);
-	}
+        vkCmdPushConstants(vkCommandBuffer, // The buffer to push the matrix to
+                        pipelineLayout,     // The pipeline layout
+                        stageFlags,         // Flags
+                        offset,             // Offset
+                        data);              // Push constant data
+    }
 	
-//	public void clearColorImageCmd(long image, int imageLayout){
+    public void BindVertexInput(long vertexBuffer, long indexBuffer) {
+        
+        try (MemoryStack stack = stackPush()) {
+            LongBuffer pVertexBuffers = stack.longs(vertexBuffer);
+            LongBuffer offsets = stack.longs(0);
+
+            vkCmdBindVertexBuffers(vkCommandBuffer, 0, pVertexBuffers, offsets);
+            vkCmdBindIndexBuffer(vkCommandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        }
+    }
+	
+    public void BindVertexInput(long vertexBuffer) {
+        
+        try (MemoryStack stack = stackPush()) {
+            
+            LongBuffer pVertexBuffers = stack.longs(vertexBuffer);
+            LongBuffer offsets = stack.longs(0);
+            
+            // Bind verts
+            vkCmdBindVertexBuffers(vkCommandBuffer, 0, pVertexBuffers, offsets);
+            
+        }
+    }
+	
+    public void BindComputeDescriptorSets(long pipelinyLayout, long descriptorSets) {
+
+        BindDescriptorSets(pipelinyLayout, descriptorSets,
+                            VK_PIPELINE_BIND_POINT_COMPUTE);
+    }
+	
+    public void BindGraphicsDescriptorSets(long pipelinyLayout, long descriptorSets){
+
+        BindDescriptorSets(pipelinyLayout, descriptorSets,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS);
+    }
+
+    private void BindDescriptorSets(long pipelinyLayout, long descriptorSets, int pipelineBindPoint){
+        
+        try (MemoryStack stack = stackPush()) {
+            vkCmdBindDescriptorSets(vkCommandBuffer, pipelineBindPoint,
+                            pipelinyLayout, 0, stack.longs(descriptorSets), null);
+        }
+    }
+	
+//	public void ClearColorImage(long image, int imageLayout){
 //		
 //		VkImageSubresourceRange subresourceRange = VkImageSubresourceRange.calloc()
 //				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
@@ -347,24 +322,27 @@ public class CVKCommandBuffer {
 //				CVKUtils.getClearColorValue(), subresourceRange);
 //	}
 //	
-//	public void drawIndexedCmd(int indexCount){
-//		
-//		vkCmdDrawIndexed(vkCommandBuffer, indexCount, 1, 0, 0, 0);
-//	}
+    public void DrawIndexed(int indexCount) {
+        vkCmdDrawIndexed(vkCommandBuffer, indexCount, 1, 0, 0, 0);
+    }
+
+    public void Draw(int vertexCount) {
+        
+        vkCmdDraw(vkCommandBuffer,
+                    vertexCount,    // number of verts
+                    1,              // no instancing, but we must draw at least 1 point
+                    0,              // first vert index
+                    0);             // first instance index (N/A)  
+    }
 //	
-//	public void drawCmd(int vertexCount){
-//		
-//		vkCmdDraw(vkCommandBuffer, vertexCount, 1, 0, 0);
-//	}
-//	
-//	public void dispatchCmd(int groupCountX, int groupCountY, int groupCountZ){
+//	public void Dispatch(int groupCountX, int groupCountY, int groupCountZ) {
 //		
 //		vkCmdDispatch(vkCommandBuffer, groupCountX, groupCountY, groupCountZ);
 //	}
 //	
-//	public void copyBufferCmd(long srcBuffer, long dstBuffer,
+//	public void CopyBuffer(long srcBuffer, long dstBuffer,
 //								    long srcOffset, long dstOffset,
-//								    long size){
+//								    long size) {
 //		
 //		VkBufferCopy.Buffer copyRegion = VkBufferCopy.calloc(1)
 //					.srcOffset(srcOffset)
@@ -374,7 +352,7 @@ public class CVKCommandBuffer {
 //		vkCmdCopyBuffer(vkCommandBuffer, srcBuffer, dstBuffer, copyRegion);
 //	}
 //	
-//	public void copyBufferToImageCmd(long srcBuffer, long dstImage, int width, int height, int depth){
+//	public void CopyBufferToImage(long srcBuffer, long dstImage, int width, int height, int depth) {
 //		
 //		VkBufferImageCopy.Buffer copyRegion = VkBufferImageCopy.calloc(1)
 //					.bufferOffset(0)
@@ -404,72 +382,65 @@ public class CVKCommandBuffer {
 //		vkCmdCopyBufferToImage(vkCommandBuffer, srcBuffer, dstImage,
 //				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copyRegion);
 //	}
-//	
-	public void pipelineImageMemoryBarrierCmd(long image, int oldLayout, int newLayout,
+	
+    public void PipelineImageMemoryBarrier(long image, int oldLayout, int newLayout,
 			int srcAccessMask, int dstAccessMask, int srcStageMask, int dstStageMask,
-			int baseMipLevel, int mipLevelCount){
-		
-            // TODO change to callocStack
-            VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1);
-            barrier.sType(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
-            barrier.oldLayout(oldLayout);
-            barrier.newLayout(newLayout);
-            barrier.srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            barrier.dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            barrier.image(image);
-            barrier.srcAccessMask(srcAccessMask);
-            barrier.dstAccessMask(dstAccessMask);
+			int baseMipLevel, int mipLevelCount) {
+       
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.callocStack(1);
+        barrier.sType(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+        barrier.oldLayout(oldLayout);
+        barrier.newLayout(newLayout);
+        barrier.srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.image(image);
+        barrier.srcAccessMask(srcAccessMask);
+        barrier.dstAccessMask(dstAccessMask);
 
-            barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-            barrier.subresourceRange().baseMipLevel(baseMipLevel);
-            barrier.subresourceRange().levelCount(mipLevelCount);
-            barrier.subresourceRange().baseArrayLayer(0);
-            barrier.subresourceRange().layerCount(1);
+        barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+        barrier.subresourceRange().baseMipLevel(baseMipLevel);
+        barrier.subresourceRange().levelCount(mipLevelCount);
+        barrier.subresourceRange().baseArrayLayer(0);
+        barrier.subresourceRange().layerCount(1);
 
-            vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
-                            VK_DEPENDENCY_BY_REGION_BIT, null, null, barrier);
+        vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
+                        VK_DEPENDENCY_BY_REGION_BIT, null, null, barrier);
 
-            barrier.free();
-	}
+    }
 	
-	public void pipelineImageMemoryBarrierCmd(long image, int srcStageMask, int dstStageMask,
-			VkImageMemoryBarrier.Buffer barrier){
-	
-            vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
-                            VK_DEPENDENCY_BY_REGION_BIT, null, null, barrier);
-	}
-	
-	public void pipelineMemoryBarrierCmd(int srcAccessMask, int dstAccessMask,
-			int srcStageMask, int dstStageMask){
-		
-            VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1);
-            barrier.sType(VK_STRUCTURE_TYPE_MEMORY_BARRIER);
-            barrier.srcAccessMask(srcAccessMask);
-            barrier.dstAccessMask(dstAccessMask);
+    public void PipelineImageMemoryBarrier(long image, int srcStageMask, int dstStageMask,
+                    VkImageMemoryBarrier.Buffer barrier) {
 
-            vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
-                            VK_DEPENDENCY_BY_REGION_BIT, barrier, null, null);
-	}
+        vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
+                        VK_DEPENDENCY_BY_REGION_BIT, null, null, barrier);
+    }
 	
-	public void pipelineBarrierCmd(int srcStageMask, int dstStageMask){
-		
-	    vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
-				VK_DEPENDENCY_BY_REGION_BIT, null, null, null);
-	}
-//	
-//	public void recordSecondaryCmdBuffers(PointerBuffer secondaryCmdBuffers){
-//		
-//		vkCmdExecuteCommands(vkCommandBuffer, secondaryCmdBuffers);
-//	}
-//	
-//	public void reset(){
-//		
-//		vkResetCommandBuffer(vkCommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
-//	}
-//	
+    public void PipelineMemoryBarrier(int srcAccessMask, int dstAccessMask,
+                    int srcStageMask, int dstStageMask) {
+
+        VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1);
+        barrier.sType(VK_STRUCTURE_TYPE_MEMORY_BARRIER);
+        barrier.srcAccessMask(srcAccessMask);
+        barrier.dstAccessMask(dstAccessMask);
+
+        vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
+                        VK_DEPENDENCY_BY_REGION_BIT, barrier, null, null);
+    }
+	
+    public void PipelineBarrier(int srcStageMask, int dstStageMask) {
+
+        vkCmdPipelineBarrier(vkCommandBuffer, srcStageMask, dstStageMask,
+                            VK_DEPENDENCY_BY_REGION_BIT, null, null, null);
+    }
+	
+    public void Reset() {
+
+        vkResetCommandBuffer(vkCommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+    }
+	
     public static CVKCommandBuffer Create(CVKDevice cvkDevice, int level, final String debugName) {
-        assert(cvkDevice != null);
-        assert(cvkDevice.GetDevice() != null);
+        CVKAssertNotNull(cvkDevice);
+        CVKAssertNotNull(cvkDevice.GetDevice());
 
         int ret;
         CVKCommandBuffer cvkCommandBuffer = new CVKCommandBuffer();

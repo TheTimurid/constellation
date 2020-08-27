@@ -43,7 +43,6 @@ import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERRO
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_VKALLOCATIONS;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.GetParentMethodName;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
@@ -76,13 +75,11 @@ import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_POLYGON_MODE_FILL;
 import static org.lwjgl.vulkan.VK10.VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
-import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -96,21 +93,13 @@ import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STAT
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX;
-import static org.lwjgl.vulkan.VK10.vkBeginCommandBuffer;
-import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
-import static org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers;
 import static org.lwjgl.vulkan.VK10.vkCmdDraw;
-import static org.lwjgl.vulkan.VK10.vkCmdPushConstants;
-import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
-import static org.lwjgl.vulkan.VK10.vkCmdSetViewport;
 import static org.lwjgl.vulkan.VK10.vkCreateGraphicsPipelines;
 import static org.lwjgl.vulkan.VK10.vkCreatePipelineLayout;
 import static org.lwjgl.vulkan.VK10.vkDestroyPipeline;
 import static org.lwjgl.vulkan.VK10.vkDestroyPipelineLayout;
 import static org.lwjgl.vulkan.VK10.vkDestroyShaderModule;
-import static org.lwjgl.vulkan.VK10.vkEndCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
 import org.lwjgl.vulkan.VkCommandBufferInheritanceInfo;
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo;
 import org.lwjgl.vulkan.VkOffset2D;
@@ -595,7 +584,7 @@ public class CVKPointsRenderable extends CVKRenderable {
     }   
     
     @Override
-    public VkCommandBuffer GetCommandBuffer(int imageIndex) {
+    public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) {
         return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
     }       
     
@@ -604,59 +593,27 @@ public class CVKPointsRenderable extends CVKRenderable {
         CVKAssertNotNull(cvkSwapChain);
         cvkVisualProcessor.VerifyInRenderThread();
         int ret;
-        
-        try (MemoryStack stack = stackPush()) {
-              
-            VkCommandBufferBeginInfo beginInfo = VkCommandBufferBeginInfo.callocStack(stack);
-            beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
-            beginInfo.pNext(0);
-            beginInfo.flags(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT);  // hard coding this for now
-            beginInfo.pInheritanceInfo(inheritanceInfo);     
+                     
+        CVKCommandBuffer commandBuffer = commandBuffers.get(imageIndex);
+        CVKAssert(commandBuffer != null);
+        CVKAssert(pipelines.get(imageIndex) != null);
 
-            VkCommandBuffer commandBuffer = commandBuffers.get(imageIndex).GetVKCommandBuffer();
-            CVKAssert(commandBuffer != null);
-            CVKAssert(pipelines.get(imageIndex) != null);
-         
-            ret = vkBeginCommandBuffer(commandBuffer, beginInfo);
-            checkVKret(ret);    
+        ret = commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
+                                                   inheritanceInfo);
+        if (VkFailed(ret)) { return ret; }
 
-	    // Set the dynamic viewport and scissor
-            VkViewport.Buffer viewport = VkViewport.callocStack(1, stack);
-            viewport.x(0.0f);
-            viewport.y(0.0f);
-            viewport.width(cvkSwapChain.GetWidth());
-            viewport.height(cvkSwapChain.GetHeight());
-            viewport.minDepth(0.0f);
-            viewport.maxDepth(1.0f);
+        commandBuffer.SetViewPort(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight());
+        commandBuffer.SetScissor(cvkDevice.GetCurrentSurfaceExtent());
 
-            VkRect2D.Buffer scissor = VkRect2D.callocStack(1, stack);
-            scissor.offset(VkOffset2D.callocStack(stack).set(0, 0));
-            scissor.extent(cvkDevice.GetCurrentSurfaceExtent());
+        commandBuffer.BindGraphicsPipeline(pipelines.get(imageIndex));
+        commandBuffer.BindVertexInput(cvkVertexBuffer.GetBufferHandle());
 
-            vkCmdSetViewport(commandBuffer, 0, viewport);           
-            vkCmdSetScissor(commandBuffer, 0, scissor);
-            
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.get(imageIndex));
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, pushConstants);
+        commandBuffer.Draw(GetVertexCount());
 
-            LongBuffer pVertexBuffers = stack.longs(cvkVertexBuffer.GetBufferHandle());
-            LongBuffer offsets = stack.longs(0);
-            
-            // Bind verts
-            vkCmdBindVertexBuffers(commandBuffer, 0, pVertexBuffers, offsets);
-                        
-            // Push MVP matrix to the shader
-            vkCmdPushConstants(commandBuffer,               // The buffer to push the matrix to
-				hPipelineLayout,            // The pipeline layout
-				VK_SHADER_STAGE_VERTEX_BIT, // Flags
-				0,                          // Offset
-				pushConstants);             // Matrix buffer
-            
-            // Copy draw commands
-            vkCmdDraw(commandBuffer, GetVertexCount(), 1, 0, 0);
-            
-            ret = vkEndCommandBuffer(commandBuffer);
-            checkVKret(ret);
-        }
+        ret = commandBuffer.FinishRecord();
+        if (VkFailed(ret)) { return ret; }
+
         return ret;
     }       
     

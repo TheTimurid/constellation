@@ -132,8 +132,7 @@ public class CVKSwapChain {
     private int nextImageAcquisitionIndex = 0;
     private List<VkCommandBuffer> commandBuffers = null;
     private final VkExtent2D vkCurrentImageExtent = VkExtent2D.malloc().set(0,0);    
-    //private int colorFormat = VK_FORMAT_R8G8B8A8_UINT;
-    
+   
     
     public int GetImageCount() { return imageCount; }
     public CVKImage GetImage(int imageIndex) {

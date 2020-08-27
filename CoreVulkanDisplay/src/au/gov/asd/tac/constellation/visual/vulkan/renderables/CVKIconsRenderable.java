@@ -38,6 +38,7 @@ import au.gov.asd.tac.constellation.visual.vulkan.shaders.CVKShaderPlaceHolder;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger.CVKLOGGER;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNotNull;
+import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNull;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_SHADER_COMPILATION;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVK_ERROR_SHADER_MODULE;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.GetParentMethodName;
@@ -55,7 +56,9 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import org.lwjgl.system.MemoryUtil;
+import static org.lwjgl.system.MemoryUtil.memAlloc;
 import static org.lwjgl.system.MemoryUtil.memAllocInt;
+import static org.lwjgl.system.MemoryUtil.memFree;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_DST_ALPHA;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
@@ -117,6 +120,7 @@ import static org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCmdBindVertexBuffers;
 import static org.lwjgl.vulkan.VK10.vkCmdDraw;
+import static org.lwjgl.vulkan.VK10.vkCmdPushConstants;
 import static org.lwjgl.vulkan.VK10.vkCreateBufferView;
 import static org.lwjgl.vulkan.VK10.vkCreateDescriptorSetLayout;
 import static org.lwjgl.vulkan.VK10.vkCreateGraphicsPipelines;
@@ -152,6 +156,7 @@ import org.lwjgl.vulkan.VkPipelineRasterizationStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
 import org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo;
 import org.lwjgl.vulkan.VkPipelineViewportStateCreateInfo;
+import org.lwjgl.vulkan.VkPushConstantRange;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
@@ -179,7 +184,9 @@ public class CVKIconsRenderable extends CVKRenderable{
     private static final int FLAGS_STRIDE = Byte.BYTES;
     public static final int SELECTED_BIT = 1;
     public static final int DIMMED_BIT = 2;
-    
+    public static final int PUSHCONSTANTS_SIZE_BYTES = 64 + 4;  // MV matrix + drawHitTest int
+    private static final Matrix44f IDENTITY_44F = Matrix44f.identity();
+     
     private long hVertexShaderModule = VK_NULL_HANDLE;
     private long hGeometryShaderModule = VK_NULL_HANDLE;
     private long hFragmentShaderModule = VK_NULL_HANDLE;
@@ -234,6 +241,10 @@ public class CVKIconsRenderable extends CVKRenderable{
     private CVKBuffer cvkVertexFlagsBuffer = null;    
     private long hPositionBufferView = VK_NULL_HANDLE;
     private long hVertexFlagsBufferView = VK_NULL_HANDLE;
+    
+    // Push constants for shaders contains the MV matrix and drawHitTest int
+    private ByteBuffer vertexPushConstants = null;
+    private ByteBuffer hitTestPushConstants = null;
     
     
     // ========================> Debuggering <======================== \\
@@ -440,19 +451,13 @@ public class CVKIconsRenderable extends CVKRenderable{
     }
     
     private static class VertexUniformBufferObject {
-        private static final int SIZEOF = (16 + 1 + 1 + 1) * Float.BYTES;
+        private static final int SIZEOF = (/*16 +*/ 1 + 1 + 1) * Float.BYTES;
 
-        public Matrix44f mvMatrix = new Matrix44f();
         public float morphMix = 0;
         public float visibilityLow = 0;
         public float visibilityHigh = 0;                 
         
         private void CopyTo(ByteBuffer buffer) {
-            for (int iRow = 0; iRow < 4; ++iRow) {
-                for (int iCol = 0; iCol < 4; ++iCol) {
-                    buffer.putFloat(mvMatrix.get(iRow, iCol));
-                }
-            }
             buffer.putFloat(morphMix);
             buffer.putFloat(visibilityLow);
             buffer.putFloat(visibilityHigh);
@@ -464,8 +469,7 @@ public class CVKIconsRenderable extends CVKRenderable{
 
         public final Matrix44f pMatrix = new Matrix44f();
         public float pixelDensity = 0;
-        public final Matrix44f highlightColor = Matrix44f.identity();
-        public int drawHitTest = 0;           
+        public final Matrix44f highlightColor = Matrix44f.identity();      
         
         private void CopyTo(ByteBuffer buffer) {
             for (int iRow = 0; iRow < 4; ++iRow) {
@@ -479,7 +483,6 @@ public class CVKIconsRenderable extends CVKRenderable{
                     buffer.putFloat(highlightColor.get(iRow, iCol));
                 }
             }            
-            buffer.putInt(drawHitTest);
         }         
     }  
     
@@ -641,6 +644,8 @@ public class CVKIconsRenderable extends CVKRenderable{
         int ret;        
         this.cvkDevice = cvkDevice;
         
+        CreatePushConstants();
+        
         ret = CreateShaderModules();
         if (VkFailed(ret)) { return ret; }             
         
@@ -698,23 +703,26 @@ public class CVKIconsRenderable extends CVKRenderable{
         DestroyCommandBuffers();
         DestroyStagingBuffers();
         DestroyShaderModules();
+        DestroyPushConstants();
         
-        CVKAssert(vertexBuffers == null);
-        CVKAssert(cvkPositionBuffer == null);
-        CVKAssert(hPositionBufferView == VK_NULL_HANDLE); 
-        CVKAssert(cvkVertexFlagsBuffer == null);
-        CVKAssert(hVertexFlagsBufferView == VK_NULL_HANDLE); 
-        CVKAssert(vertexUniformBuffers == null);
-        CVKAssert(geometryUniformBuffers == null);
-        CVKAssert(fragmentUniformBuffers == null); 
-        CVKAssert(pDescriptorSets == null);
-        CVKAssert(hDescriptorLayout == VK_NULL_HANDLE);  
-        CVKAssert(commandBuffers == null);        
-        CVKAssert(displayPipelines == null);
-        CVKAssert(hPipelineLayout == VK_NULL_HANDLE);    
-        CVKAssert(hVertexShaderModule == VK_NULL_HANDLE);
-        CVKAssert(hGeometryShaderModule == VK_NULL_HANDLE);
-        CVKAssert(hFragmentShaderModule == VK_NULL_HANDLE);
+        CVKAssertNull(vertexBuffers);
+        CVKAssertNull(cvkPositionBuffer);
+        CVKAssertNull(hPositionBufferView); 
+        CVKAssertNull(cvkVertexFlagsBuffer);
+        CVKAssertNull(hVertexFlagsBufferView); 
+        CVKAssertNull(vertexUniformBuffers);
+        CVKAssertNull(geometryUniformBuffers);
+        CVKAssertNull(fragmentUniformBuffers); 
+        CVKAssertNull(pDescriptorSets);
+        CVKAssertNull(hDescriptorLayout);  
+        CVKAssertNull(commandBuffers);        
+        CVKAssertNull(displayPipelines);
+        CVKAssertNull(hPipelineLayout);    
+        CVKAssertNull(hVertexShaderModule);
+        CVKAssertNull(hGeometryShaderModule);
+        CVKAssertNull(hFragmentShaderModule);
+        CVKAssertNull(vertexPushConstants);
+        CVKAssertNull(hitTestPushConstants);
     }
     
        
@@ -739,7 +747,7 @@ public class CVKIconsRenderable extends CVKRenderable{
         }
         
         return VK_SUCCESS; 
-    }      
+    }
     
     @Override
     public int SetNewSwapChain(CVKSwapChain newSwapChain) {
@@ -998,7 +1006,6 @@ public class CVKIconsRenderable extends CVKRenderable{
         
         // Populate the UBO.  This is easy to deal with, but not super efficient
         // as we are effectively staging into the staging buffer below.
-        vertexUBO.mvMatrix = cvkVisualProcessor.getDisplayModelViewMatrix();
         vertexUBO.morphMix = cvkVisualProcessor.getDisplayCamera().getMix();
         
         // TODO: replace with constants.  In the JOGL version these were in a static var CAMERA that never changed
@@ -1023,6 +1030,8 @@ public class CVKIconsRenderable extends CVKRenderable{
             ret = vertexUniformBuffers.get(i).CopyFrom(cvkVertexUBStagingBuffer);   
             if (VkFailed(ret)) { return ret; }
         }
+        
+        UpdatePushConstantsMatrix();
         
         // We are done, reset the resource state
         SetVertexUBOState(CVK_RESOURCE_CLEAN);
@@ -1066,7 +1075,6 @@ public class CVKIconsRenderable extends CVKRenderable{
         geometryUBO.pMatrix.set(cvkVisualProcessor.GetProjectionMatrix());
         geometryUBO.pixelDensity = cvkVisualProcessor.GetPixelDensity();
         geometryUBO.highlightColor.set(mtxHighlightColour);
-        geometryUBO.drawHitTest = 0; // TODO: Hydra41 hit test
         
         // Staging buffer so our VBO can be device local (most performant memory)
         final int size = GeometryUniformBufferObject.SIZEOF;
@@ -1159,6 +1167,70 @@ public class CVKIconsRenderable extends CVKRenderable{
     }      
     
     
+    // ========================> Push constants <======================== \\
+    
+    private int CreatePushConstants() {
+        // Initialise push constants to identity mtx
+        vertexPushConstants = memAlloc(64);
+        for (int iRow = 0; iRow < 4; ++iRow) {
+            for (int iCol = 0; iCol < 4; ++iCol) {
+                vertexPushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
+            }
+        }
+        
+        // Set DrawHitTest to false
+        hitTestPushConstants = memAlloc(4);
+        hitTestPushConstants.putInt(0);
+        
+        vertexPushConstants.flip();
+        hitTestPushConstants.flip();
+        
+        return VK_SUCCESS;
+    }
+    
+    private void UpdatePushConstantsMatrix(){
+        CVKAssertNotNull(cvkSwapChain);
+        
+        vertexPushConstants.clear();
+        
+        // Update MV Matrix
+        Matrix44f mvMatrix = cvkVisualProcessor.getDisplayModelViewMatrix();
+        for (int iRow = 0; iRow < 4; ++iRow) {
+            for (int iCol = 0; iCol < 4; ++iCol) {
+                vertexPushConstants.putFloat(mvMatrix.get(iRow, iCol));
+            }
+        }
+        
+        vertexPushConstants.flip();        
+    }
+    
+    private void UpdatePushConstantsHitTest(boolean drawHitTest){
+        CVKAssertNotNull(cvkSwapChain);
+        
+        hitTestPushConstants.clear();
+        
+        if (drawHitTest) {
+            hitTestPushConstants.putInt(1);
+        } else {
+            hitTestPushConstants.putInt(0);
+        }
+
+        hitTestPushConstants.flip();        
+    }
+    
+    private void DestroyPushConstants() {
+        if (vertexPushConstants != null) {
+            memFree(vertexPushConstants);
+            vertexPushConstants = null;
+        }
+        
+        if (hitTestPushConstants != null) {
+            memFree(hitTestPushConstants);
+            hitTestPushConstants = null;
+        }
+    }
+    
+    
     // ========================> Command buffers <======================== \\
     
     public int CreateCommandBuffers(){
@@ -1186,9 +1258,14 @@ public class CVKIconsRenderable extends CVKRenderable{
     }   
     
     @Override
-    public VkCommandBuffer GetCommandBuffer(int imageIndex) {
+    public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) {
         return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
     }       
+    
+    @Override
+    public VkCommandBuffer GetHitTestCommandBuffer(int imageIndex) {
+        return offscreenCommandBuffers.get(imageIndex).GetVKCommandBuffer(); 
+    }
     
     @Override
     public int RecordDisplayCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int imageIndex){
@@ -1198,96 +1275,76 @@ public class CVKIconsRenderable extends CVKRenderable{
         CVKAssertNotNull(cvkSwapChain);
                 
         int ret;     
-        try (MemoryStack stack = stackPush()) {
- 
-            CVKCommandBuffer commandBuffer = commandBuffers.get(imageIndex);
-            CVKAssert(commandBuffer != null);
-            CVKAssert(displayPipelines.get(imageIndex) != null);
-            
-            commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
-                                                           inheritanceInfo);
-            
-            // Set the dynamic viewport and scissor
-            commandBuffer.viewPortCmd(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), stack);
-            commandBuffer.scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
-            
-            // Bind the graphics pipeline
-            commandBuffer.BindGraphicsPipelineCmd(displayPipelines.get(imageIndex));
+         
+        CVKCommandBuffer commandBuffer = commandBuffers.get(imageIndex);
+        CVKAssert(commandBuffer != null);
+        CVKAssert(displayPipelines.get(imageIndex) != null);
 
-            LongBuffer pVertexBuffers = stack.longs(vertexBuffers.get(imageIndex).GetBufferHandle());
-            LongBuffer offsets = stack.longs(0);
+        commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT, inheritanceInfo);
 
-            // Bind verts
-            vkCmdBindVertexBuffers(commandBuffer.GetVKCommandBuffer(), 0, pVertexBuffers, offsets);
+        commandBuffer.SetViewPort(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight());
+        commandBuffer.SetScissor(cvkDevice.GetCurrentSurfaceExtent());
 
-            // Bind descriptors
-            vkCmdBindDescriptorSets(commandBuffer.GetVKCommandBuffer(), 
-                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    hPipelineLayout, 
-                                    0, 
-                                    stack.longs(pDescriptorSets.get(imageIndex)), 
-                                    null);            
-            
-            vkCmdDraw(commandBuffer.GetVKCommandBuffer(),
-                      GetVertexCount(),  //number of verts == number of digits
-                      1,  //no instancing, but we must draw at least 1 point
-                      0,  //first vert index
-                      0); //first instance index (N/A)
-            
-            ret = vkEndCommandBuffer(commandBuffer.GetVKCommandBuffer());
-            checkVKret(ret);
-        }
+        commandBuffer.BindGraphicsPipeline(displayPipelines.get(imageIndex));
+        commandBuffer.BindVertexInput(vertexBuffers.get(imageIndex).GetBufferHandle());
+
+        // Push MVP matrix to the shader
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+
+        // Push drawHitTest flag to the shaders
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 64, hitTestPushConstants);
+
+        commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
+
+        commandBuffer.Draw(GetVertexCount());
+
+        ret = commandBuffer.FinishRecord();
+        if (VkFailed(ret)) { return ret; }
         
         return ret;
     }
     
     @Override
     public int RecordHitTestCommandBuffer(VkCommandBufferInheritanceInfo inheritanceInfo, int imageIndex){
-                cvkVisualProcessor.VerifyInRenderThread();
+        cvkVisualProcessor.VerifyInRenderThread();
         CVKAssertNotNull(cvkDevice.GetDevice());
         CVKAssert(cvkDevice.GetCommandPoolHandle() != VK_NULL_HANDLE);
         CVKAssertNotNull(cvkSwapChain);
-                
+
         int ret;     
-        try (MemoryStack stack = stackPush()) {
- 
-            CVKCommandBuffer commandBuffer = offscreenCommandBuffers.get(imageIndex);          
-            CVKAssertNotNull(commandBuffer);
-            CVKAssertNotNull(hitTestPipelines.get(imageIndex));
-            
-            commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
-                                                           inheritanceInfo);
-            
-            // Set the dynamic viewport and scissor
-            commandBuffer.viewPortCmd(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), stack);
-            commandBuffer.scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
-            
-            // Bind the graphics pipeline
-            commandBuffer.BindGraphicsPipelineCmd(hitTestPipelines.get(imageIndex));
+        
+        // Set the hit test flag in the shaders to true
+        UpdatePushConstantsHitTest(true);            
 
-            LongBuffer pVertexBuffers = stack.longs(vertexBuffers.get(imageIndex).GetBufferHandle());
-            LongBuffer offsets = stack.longs(0);
+        CVKCommandBuffer commandBuffer = offscreenCommandBuffers.get(imageIndex);          
+        CVKAssertNotNull(commandBuffer);
+        CVKAssertNotNull(hitTestPipelines.get(imageIndex));
 
-            // Bind verts
-            vkCmdBindVertexBuffers(commandBuffer.GetVKCommandBuffer(), 0, pVertexBuffers, offsets);
+        ret = commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
+                                                       inheritanceInfo);
+        if (VkFailed(ret)) { return ret; }
 
-            // Bind descriptors
-            vkCmdBindDescriptorSets(commandBuffer.GetVKCommandBuffer(), 
-                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    hPipelineLayout,
-                                    0, 
-                                    stack.longs(pDescriptorSets.get(imageIndex)), 
-                                    null);            
-            
-            vkCmdDraw(commandBuffer.GetVKCommandBuffer(),
-                      GetVertexCount(),  //number of verts == number of digits
-                      1,  //no instancing, but we must draw at least 1 point
-                      0,  //first vert index
-                      0); //first instance index (N/A)
-            
-            ret = vkEndCommandBuffer(commandBuffer.GetVKCommandBuffer());
-            checkVKret(ret);
-        }
+        commandBuffer.SetViewPort(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight());
+        commandBuffer.SetScissor(cvkDevice.GetCurrentSurfaceExtent());
+
+        commandBuffer.BindGraphicsPipeline(hitTestPipelines.get(imageIndex));
+        commandBuffer.BindVertexInput(vertexBuffers.get(imageIndex).GetBufferHandle());
+
+        // Push MVP matrix to the shader
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+
+        // Push drawHitTest flag to the shaders
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 64, hitTestPushConstants);
+
+        commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
+
+        commandBuffer.Draw(GetVertexCount());
+
+        ret = commandBuffer.FinishRecord();
+        if (VkFailed(ret)) { return ret; }
+
+        // Reset hit test flag to false
+        UpdatePushConstantsHitTest(false);
         
         return ret;
     }
@@ -1627,10 +1684,23 @@ public class CVKIconsRenderable extends CVKRenderable{
         CVKAssert(hDescriptorLayout != VK_NULL_HANDLE);
                
         int ret;       
-        try (MemoryStack stack = stackPush()) {           
+        try (MemoryStack stack = stackPush()) {  
+            VkPushConstantRange.Buffer pushConstantRange;
+            pushConstantRange = VkPushConstantRange.calloc(2);
+            pushConstantRange.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
+            pushConstantRange.get(0).size(64);
+            pushConstantRange.get(0).offset(0);
+
+            //VkPushConstantRange.Buffer geometryPushConstantRange;
+            //pushConstantRange.get(1) = VkPushConstantRange.calloc(1);
+            pushConstantRange.get(1).stageFlags(VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+            pushConstantRange.get(1).size(4);
+            pushConstantRange.get(1).offset(64);
+
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(stack);
             pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
             pipelineLayoutInfo.pSetLayouts(stack.longs(hDescriptorLayout));
+            pipelineLayoutInfo.pPushConstantRanges(pushConstantRange);
             LongBuffer pPipelineLayout = stack.longs(VK_NULL_HANDLE);
             ret = vkCreatePipelineLayout(cvkDevice.GetDevice(), pipelineLayoutInfo, null, pPipelineLayout);
             if (VkFailed(ret)) { return ret; }

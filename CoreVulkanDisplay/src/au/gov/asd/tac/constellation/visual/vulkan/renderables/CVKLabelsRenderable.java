@@ -829,7 +829,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
     }   
     
     @Override
-    public VkCommandBuffer GetCommandBuffer(int imageIndex) {
+    public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) {
         return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
     }       
     
@@ -851,7 +851,7 @@ public class CVKLabelsRenderable extends CVKRenderable {
 //            beginInfo.flags(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT);
 //            beginInfo.pInheritanceInfo(inheritanceInfo);             
 //
-//            VkCommandBuffer commandBuffer = GetCommandBuffer(imageIndex);
+//            VkCommandBuffer commandBuffer = GetDisplayCommandBuffer(imageIndex);
 //            ret = vkBeginCommandBuffer(commandBuffer, beginInfo);
 //            checkVKret(ret);
 //            

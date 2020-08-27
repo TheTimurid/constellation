@@ -707,7 +707,7 @@ public class CVKAxesRenderable extends CVKRenderable {
     }
     
     @Override
-    public VkCommandBuffer GetCommandBuffer(int imageIndex) {
+    public VkCommandBuffer GetDisplayCommandBuffer(int imageIndex) {
         return commandBuffers.get(imageIndex).GetVKCommandBuffer(); 
     }     
     
@@ -716,44 +716,26 @@ public class CVKAxesRenderable extends CVKRenderable {
         CVKAssertNotNull(cvkSwapChain);
         cvkVisualProcessor.VerifyInRenderThread();
         int ret;
-        
-        try (MemoryStack stack = stackPush()) {
-            
-            CVKCommandBuffer commandBuffer = commandBuffers.get(imageIndex);
-            CVKAssertNotNull(commandBuffer);
-            CVKAssertNotNull(pipelines.get(imageIndex));
-            
-            commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
-                                                           inheritanceInfo);
-            
-            // Set the dynamic viewport and scissor
-            commandBuffer.viewPortCmd(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight(), stack);
-            commandBuffer.scissorCmd(cvkDevice.GetCurrentSurfaceExtent(), stack);
-            
-            // Bind the graphics pipeline
-            commandBuffer.BindGraphicsPipelineCmd(pipelines.get(imageIndex));
-            
+                    
+        CVKCommandBuffer commandBuffer = commandBuffers.get(imageIndex);
+        CVKAssertNotNull(commandBuffer);
+        CVKAssertNotNull(pipelines.get(imageIndex));
 
-            // We only use 1 vertBuffer here as the verts are fixed the entire lifetime of the object
-            LongBuffer pVertexBuffers = stack.longs(cvkVertexBuffer.GetBufferHandle());
-            LongBuffer offsets = stack.longs(0);
-            
-            // Bind verts
-            vkCmdBindVertexBuffers(commandBuffer.GetVKCommandBuffer(), 0, pVertexBuffers, offsets);
-                        
-            // Push MVP matrix to the shader
-            vkCmdPushConstants(commandBuffer.GetVKCommandBuffer(),   // The buffer to push the matrix to
-				hPipelineLayout,            // The pipeline layout
-				VK_SHADER_STAGE_VERTEX_BIT, // Flags
-				0,                          // Offset
-				pushConstants);             // Matrix buffer
-            
-            // Copy draw commands
-            vkCmdDraw(commandBuffer.GetVKCommandBuffer(), GetVertexCount(), 1, 0, 0);
-            
-            ret = vkEndCommandBuffer(commandBuffer.GetVKCommandBuffer());
-            checkVKret(ret);
-        }
+        ret = commandBuffer.BeginRecordSecondary(VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
+                                                       inheritanceInfo);
+        if (VkFailed(ret)) { return ret; }
+
+        commandBuffer.SetViewPort(cvkSwapChain.GetWidth(), cvkSwapChain.GetHeight());
+        commandBuffer.SetScissor(cvkDevice.GetCurrentSurfaceExtent());
+        commandBuffer.BindGraphicsPipeline(pipelines.get(imageIndex));
+        commandBuffer.BindVertexInput(cvkVertexBuffer.GetBufferHandle());
+        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, pushConstants);
+
+        commandBuffer.Draw(GetVertexCount());
+
+        ret = commandBuffer.FinishRecord();
+        if (VkFailed(ret)) { return ret; }
+
         return ret;
     }
     
