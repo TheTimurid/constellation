@@ -137,7 +137,7 @@ public class InteractiveVKVisualProcessor extends CVKVisualProcessor implements 
 
         @Override
         public void apply() {
-            //setDrawHitTest(doHitTesting);
+            setDrawHitTest(doHitTesting);
         }
 
         @Override

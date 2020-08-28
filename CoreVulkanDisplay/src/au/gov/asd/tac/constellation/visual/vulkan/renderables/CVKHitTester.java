@@ -40,7 +40,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.LinkedBlockingDeque;
-import java.util.logging.Level;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -365,6 +364,15 @@ public class CVKHitTester extends CVKRenderable {
     @Override
     public void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs) {}       
     
+    // TODO: This code is not being called yet
+    // It updates the hitTestRequest to be the last
+    public void update() {
+        if (requestQueue != null && !requestQueue.isEmpty()) {
+            requestQueue.forEach(request -> notificationQueues.add(request.getNotificationQueue()));
+            hitTestRequest = requestQueue.getLast();
+            requestQueue.clear();
+        }
+    }
     
     // ========================> Display <======================== \\
     
@@ -392,7 +400,7 @@ public class CVKHitTester extends CVKRenderable {
             ret = CreateFrameBuffer();
             if (VkFailed(ret)) { return ret; }  
         }
-                      
+        
         if (requestQueue != null && !requestQueue.isEmpty()) {
             requestQueue.forEach(request -> notificationQueues.add(request.getNotificationQueue()));
             hitTestRequest = requestQueue.getLast();
@@ -434,7 +442,10 @@ public class CVKHitTester extends CVKRenderable {
             }
         }
         
-        needsDisplayUpdate = false;
+        // If there are still requests that need to be processed then continue updating
+        // next frame otherwise we can cause a deadlock with a request response
+        // waiting (blocking the VisualManager) forever for a response.
+        needsDisplayUpdate =  (requestQueue.size() > 0);
         return ret;
     }  
 

@@ -282,6 +282,27 @@ public class CVKVisualProcessor extends VisualProcessor {
         //cvkCanvas.Destroy();            
     }
 
+        /**
+     * Tell this processor that it should draw the "Hit Test" visualisation as
+     * well as the regular visualisation as part of each frame of the GL
+     * life-cycle.
+     * <p>
+     * The hit-test visualisation is a hidden visualisation that gets drawn to
+     * an off-screen openGL buffer. It fills the background with solid black and
+     * then draws each element using a color whose red value corresponds to that
+     * element's ID.
+     * <p>
+     * This method is intended to be called by subclass processors that utilise
+     * this hit-test visualisation for some form of graph interaction. See the
+     * <code>HitTester</code> class in the Interactive Graph package for a
+     * canonical example.
+     *
+     * @param drawHitTest
+     */
+    protected final void setDrawHitTest(final boolean drawHitTest) {
+        cvkCanvas.GetRenderer().SetDrawHitTest(drawHitTest);
+    }
+    
     private final class GLExportToImageOperation implements VisualOperation {
 
         private final File file;
