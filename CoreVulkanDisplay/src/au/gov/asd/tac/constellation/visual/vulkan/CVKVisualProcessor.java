@@ -36,6 +36,7 @@ import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKIconsRenderable
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKLabelsRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKLinksRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKNewLineRenderable;
+import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKPerspectiveLinksRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKPointsRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable;
 import au.gov.asd.tac.constellation.visual.vulkan.utils.CVKGraphLogger;
@@ -79,6 +80,7 @@ public class CVKVisualProcessor extends VisualProcessor {
     private final CVKIconsRenderable cvkIcons;
     private final CVKLabelsRenderable cvkLabels;
     private final CVKLinksRenderable cvkLinks;
+    private final CVKPerspectiveLinksRenderable cvkPerspectiveLinks;
     private final CVKPointsRenderable cvkPoints;
     private final Matrix44f modelViewMatrix = new Matrix44f();  
     private Camera camera = null;
@@ -128,6 +130,8 @@ public class CVKVisualProcessor extends VisualProcessor {
             cvkCanvas.AddRenderable(cvkLabels);
             cvkLinks = new CVKLinksRenderable(this);
             cvkCanvas.AddRenderable(cvkLinks);
+            cvkPerspectiveLinks = new CVKPerspectiveLinksRenderable(cvkLinks);
+            cvkCanvas.AddRenderable(cvkPerspectiveLinks);
             cvkNewLineRenderable = new CVKNewLineRenderable(this);
             cvkCanvas.AddRenderable(cvkNewLineRenderable); 
             cvkAxes = new CVKAxesRenderable(this);
@@ -138,7 +142,8 @@ public class CVKVisualProcessor extends VisualProcessor {
             cvkCanvas.AddRenderable(cvkFPS);  
             
             hitTesters.add(cvkIcons);
-            hitTesters.add(cvkLinks);            
+            hitTesters.add(cvkLinks);  
+            hitTesters.add(cvkPerspectiveLinks);
             
             
 //            cvkIcons.DEBUG_skipRender = true;

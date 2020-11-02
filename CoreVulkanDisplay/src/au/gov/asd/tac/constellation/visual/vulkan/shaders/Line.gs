@@ -26,10 +26,10 @@ layout(std140, push_constant) uniform HitTestPushConstant {
 // === UNIFORMS ===
 layout(std140, binding = 2) uniform UniformBlock {
     mat4 pMatrix;
+    vec4 highlightColor;
     float visibilityLow;
     float visibilityHigh;
-    float directionMotion;
-    vec4 highlightColor;
+    float directionMotion;    
     float alpha;
 } ub;
 

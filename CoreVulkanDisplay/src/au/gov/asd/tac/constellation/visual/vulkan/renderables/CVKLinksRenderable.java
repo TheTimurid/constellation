@@ -137,7 +137,6 @@ public class CVKLinksRenderable extends CVKRenderable {
     
     // Resources recreated only through user events
     private int vertexCount = 0;
-//    private List<Vertex> vertices = null;
     private CVKBuffer cvkVertexStagingBuffer = null;  
 
     // Resources we don't own but use and must track so we know when to update
@@ -162,7 +161,7 @@ public class CVKLinksRenderable extends CVKRenderable {
     
     // ========================> Classes <======================== \\
     
-    private static class Vertex {
+    protected static class Vertex {
         // This looks a little weird for Java, but LWJGL and JOGL both require
         // contiguous memory which is passed to the native GL or VK libraries.        
         private static final int BYTES = Vector4f.BYTES + Vector4i.BYTES;
@@ -222,7 +221,7 @@ public class CVKLinksRenderable extends CVKRenderable {
          * 
          * @return Binding description for the FPS vertex type
          */
-        private static VkVertexInputBindingDescription.Buffer GetBindingDescription() {
+        protected static VkVertexInputBindingDescription.Buffer GetBindingDescription() {
 
             VkVertexInputBindingDescription.Buffer bindingDescription =
                     VkVertexInputBindingDescription.callocStack(1);
@@ -248,7 +247,7 @@ public class CVKLinksRenderable extends CVKRenderable {
          * 
          * @return 
          */
-        private static VkVertexInputAttributeDescription.Buffer GetAttributeDescriptions() {
+        protected static VkVertexInputAttributeDescription.Buffer GetAttributeDescriptions() {
 
             VkVertexInputAttributeDescription.Buffer attributeDescriptions =
                     VkVertexInputAttributeDescription.callocStack(2);
@@ -281,11 +280,11 @@ public class CVKLinksRenderable extends CVKRenderable {
         return Vertex.GetAttributeDescriptions();
     }             
     
-    private static class VertexUniformBufferObject {
+    protected static class VertexUniformBufferObject {
         public float morphMix = 0;  
         private static Integer padding = null;
         
-        private static int SizeOf() {
+        protected static int SizeOf() {
             if (padding == null) {
                 CVKAssertNotNull(CVKDevice.GetVkDevice()); 
                 final int minAlignment = CVKDevice.GetMinUniformBufferAlignment();
@@ -311,7 +310,7 @@ public class CVKLinksRenderable extends CVKRenderable {
         }         
     }      
     
-    private static class GeometryUniformBufferObject {                                           
+    protected static class GeometryUniformBufferObject {                                           
         private final Matrix44f pMatrix = new Matrix44f();    
         private final Vector4f highlightColour = new Vector4f();
         private float visibilityLow;
@@ -320,7 +319,7 @@ public class CVKLinksRenderable extends CVKRenderable {
         private float alpha;
         private static Integer padding = null;   
                     
-        private static int SizeOf() {
+        protected static int SizeOf() {
             if (padding == null) {
                 CVKAssertNotNull(CVKDevice.GetVkDevice()); 
                 final int minAlignment = CVKDevice.GetMinUniformBufferAlignment();
@@ -386,6 +385,7 @@ public class CVKLinksRenderable extends CVKRenderable {
     public CVKLinksRenderable(CVKVisualProcessor visualProcessor) {
         super(visualProcessor);
         
+        //points?
         assemblyTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     }              
     
@@ -1501,4 +1501,8 @@ public class CVKLinksRenderable extends CVKRenderable {
     
     
     // ========================> Helpers <======================== \\
+    
+    public long GetVertexBufferHandle(int imageIndex) { return vertexBuffers.get(imageIndex).GetBufferHandle(); }
+    public long GetVertexUniformBufferHandle(int imageIndex) { return vertexUniformBuffers.get(imageIndex).GetBufferHandle(); }
+    public long GetGeometryUniformBufferHandle(int imageIndex) { return geometryUniformBuffers.get(imageIndex).GetBufferHandle(); }
 }
