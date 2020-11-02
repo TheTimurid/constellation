@@ -329,6 +329,15 @@ public class CVKHitTester extends CVKRenderable {
     @Override
     public void IncrementDescriptorTypeRequirements(CVKDescriptorPoolRequirements reqs, CVKDescriptorPoolRequirements perImageReqs) {}       
     
+    // TODO: This code is not being called yet
+    // It updates the hitTestRequest to be the last
+    public void update() {
+        if (requestQueue != null && !requestQueue.isEmpty()) {
+            requestQueue.forEach(request -> notificationQueues.add(request.getNotificationQueue()));
+            hitTestRequest = requestQueue.getLast();
+            requestQueue.clear();
+        }
+    }
     
     // ========================> Display <======================== \\
     
@@ -356,7 +365,7 @@ public class CVKHitTester extends CVKRenderable {
             ret = CreateFrameBuffer();
             if (VkFailed(ret)) { return ret; }  
         }
-                      
+        
         if (requestQueue != null && !requestQueue.isEmpty()) {
             requestQueue.forEach(request -> notificationQueues.add(request.getNotificationQueue()));
             hitTestRequest = requestQueue.getLast();
@@ -398,7 +407,10 @@ public class CVKHitTester extends CVKRenderable {
             }
         }
         
-        needsDisplayUpdate = false;
+        // If there are still requests that need to be processed then continue updating
+        // next frame otherwise we can cause a deadlock with a request response
+        // waiting (blocking the VisualManager) forever for a response.
+        needsDisplayUpdate =  (requestQueue.size() > 0);
         return ret;
     }  
 

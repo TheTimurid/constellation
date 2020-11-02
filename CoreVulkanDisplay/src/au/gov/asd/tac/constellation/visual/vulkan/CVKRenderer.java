@@ -113,9 +113,13 @@ public class CVKRenderer implements ComponentListener {
     private Vector3f clr = new Vector3f(0.0f, 0.0f, 0.0f);
     private boolean requestScreenshot = false;
     private File requestScreenshotFile = null;
+    private boolean drawHitTest = false;
     
     public final CVKGraphLogger GetLogger() { return cvkCanvas.GetLogger(); }
     
+    public void SetDrawHitTest(boolean drawHitTest){
+        this.drawHitTest = drawHitTest;
+    }
 
     // ========================> Lifetime <======================== \\
     
@@ -676,10 +680,12 @@ public class CVKRenderer implements ComponentListener {
                     }
                     
                     // Offscreen Render Pass
-                    List<CVKRenderable> hitTestRenderables = cvkVisualProcessor.GetHitTesterList();
-                    for (CVKRenderable r : renderables) {
-                        r.OffscreenRender(hitTestRenderables); 
-                    }                    
+                    if (drawHitTest) {
+                        List<CVKRenderable> hitTestRenderables = cvkVisualProcessor.GetHitTesterList();
+                        for (CVKRenderable r : renderables) {
+                            r.OffscreenRender(hitTestRenderables); 
+                        }
+                    }
         
                     if (requestScreenshot) {
                         CVKDevice.WaitIdle();
