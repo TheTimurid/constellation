@@ -78,9 +78,9 @@ public class CVKVisualProcessor extends VisualProcessor {
     private final CVKAxesRenderable cvkAxes;
     private final CVKFPSRenderable cvkFPS;
     private final CVKIconsRenderable cvkIcons;
-    private final CVKLabelsRenderable cvkLabels;
     private final CVKLinksRenderable cvkLinks;
-    private final CVKPerspectiveLinksRenderable cvkPerspectiveLinks;
+    private final CVKPerspectiveLinksRenderable cvkPerspectiveLinks;    
+    private final CVKLabelsRenderable cvkLabels;
     private final CVKPointsRenderable cvkPoints;
     private final Matrix44f modelViewMatrix = new Matrix44f();  
     private Camera camera = null;
@@ -122,16 +122,20 @@ public class CVKVisualProcessor extends VisualProcessor {
            
             cvkCanvas = new CVKCanvas(this);   
 
+            // The order renderables is added is important as it dictates the 
+            // render order.  Labels render with a translucent background so
+            // must be rendered after links and icons to avoid needing to alpha
+            // sort.
             cvkHitTester = new CVKHitTester(this);     
             cvkCanvas.AddRenderable(cvkHitTester);              
             cvkIcons = new CVKIconsRenderable(this);
             cvkCanvas.AddRenderable(cvkIcons);
-            cvkLabels = new CVKLabelsRenderable(this);
-            cvkCanvas.AddRenderable(cvkLabels);
             cvkLinks = new CVKLinksRenderable(this);
             cvkCanvas.AddRenderable(cvkLinks);
             cvkPerspectiveLinks = new CVKPerspectiveLinksRenderable(cvkLinks);
             cvkCanvas.AddRenderable(cvkPerspectiveLinks);
+            cvkLabels = new CVKLabelsRenderable(this);
+            cvkCanvas.AddRenderable(cvkLabels);
             cvkNewLineRenderable = new CVKNewLineRenderable(this);
             cvkCanvas.AddRenderable(cvkNewLineRenderable); 
             cvkAxes = new CVKAxesRenderable(this);
@@ -723,13 +727,13 @@ public class CVKVisualProcessor extends VisualProcessor {
                 case CONNECTION_COLOR:
                     return (change, access) -> {
     //                    addTaskIfReady(loopBatcher.updateColors(access, change), loopBatcher);
-                        addTask(cvkLinks.TaskUpdateColours(change, access));
+                        addTask(cvkLinks.TaskUpdateLinks(change, access));
                     };
                 case CONNECTION_SELECTED:
                     GetLogger().warning("Event CONNECTION_SELECTED unhandled!");
                     return (change, access) -> {
     //                    addTaskIfReady(loopBatcher.updateInfo(access, change), loopBatcher);
-    //                    addTask(cvkLinks.TaskUpdateInfo(change, access));
+                        addTask(cvkLinks.TaskUpdateLinks(change, access));
                     };
                 case VERTEX_BLAZED:
                     GetLogger().warning("Event VERTEX_BLAZED unhandled!");

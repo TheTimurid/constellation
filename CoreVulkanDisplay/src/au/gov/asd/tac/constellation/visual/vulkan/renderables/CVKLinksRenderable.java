@@ -145,8 +145,12 @@ public class CVKLinksRenderable extends CVKRenderable {
     private long hPositionBufferView = VK_NULL_HANDLE;    
     
     // Push constants for shaders contains the MV matrix and drawHitTest int
-    private ByteBuffer vertexPushConstants = null;
+    private ByteBuffer modelViewPushConstants = null;
     private ByteBuffer hitTestPushConstants = null;
+    private static final int MODEL_VIEW_PUSH_CONSTANT_STAGES = VK_SHADER_STAGE_VERTEX_BIT;
+    private static final int HIT_TEST_PUSH_CONSTANT_STAGES = VK_SHADER_STAGE_GEOMETRY_BIT;
+    private static final int MODEL_VIEW_PUSH_CONSTANT_SIZE = Matrix44f.BYTES;
+    private static final int HIT_TEST_PUSH_CONSTANT_SIZE = Integer.BYTES;    
     
     private static final int LINE_INFO_ARROW = 1;
     private static final int LINE_INFO_BITS_AVOID = 4;
@@ -460,7 +464,7 @@ public class CVKLinksRenderable extends CVKRenderable {
         CVKAssertNull(displayCommandBuffers);        
         CVKAssertNull(displayPipelines);
         CVKAssertNull(hPipelineLayout);    
-        CVKAssertNull(vertexPushConstants);
+        CVKAssertNull(modelViewPushConstants);
         CVKAssertNull(hitTestPushConstants);
     }
     
@@ -711,18 +715,18 @@ public class CVKLinksRenderable extends CVKRenderable {
     
     private int CreatePushConstants() {
         // Initialise push constants to identity mtx
-        vertexPushConstants = MemoryUtil.memAlloc(Matrix44f.BYTES);
+        modelViewPushConstants = MemoryUtil.memAlloc(MODEL_VIEW_PUSH_CONSTANT_SIZE);
         for (int iRow = 0; iRow < 4; ++iRow) {
             for (int iCol = 0; iCol < 4; ++iCol) {
-                vertexPushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
+                modelViewPushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
             }
         }
         
         // Set DrawHitTest to false
-        hitTestPushConstants = MemoryUtil.memAlloc(Integer.BYTES);
+        hitTestPushConstants = MemoryUtil.memAlloc(HIT_TEST_PUSH_CONSTANT_SIZE);
         hitTestPushConstants.putInt(0);
         
-        vertexPushConstants.flip();
+        modelViewPushConstants.flip();
         hitTestPushConstants.flip();
         
         return VK_SUCCESS;
@@ -731,18 +735,18 @@ public class CVKLinksRenderable extends CVKRenderable {
     private void UpdateVertexPushConstants(){
         CVKAssertNotNull(cvkSwapChain);
         
-        vertexPushConstants.clear();
+        modelViewPushConstants.clear();
         Matrix44f mvMatrix = cvkVisualProcessor.getDisplayModelViewMatrix();
         for (int iRow = 0; iRow < 4; ++iRow) {
             for (int iCol = 0; iCol < 4; ++iCol) {
-                vertexPushConstants.putFloat(mvMatrix.get(iRow, iCol));
+                modelViewPushConstants.putFloat(mvMatrix.get(iRow, iCol));
             }
         }
         
-        vertexPushConstants.flip();        
+        modelViewPushConstants.flip();        
     }
     
-    private void UpdatePushConstantsHitTest(boolean drawHitTest){
+    protected void UpdatePushConstantsHitTest(boolean drawHitTest){
         CVKAssertNotNull(cvkSwapChain);
         
         hitTestPushConstants.clear();
@@ -757,9 +761,9 @@ public class CVKLinksRenderable extends CVKRenderable {
     }
     
     private void DestroyPushConstants() {
-        if (vertexPushConstants != null) {
-            memFree(vertexPushConstants);
-            vertexPushConstants = null;
+        if (modelViewPushConstants != null) {
+            memFree(modelViewPushConstants);
+            modelViewPushConstants = null;
         }
         
         if (hitTestPushConstants != null) {
@@ -825,10 +829,10 @@ public class CVKLinksRenderable extends CVKRenderable {
         commandBuffer.BindVertexInput(vertexBuffers.get(imageIndex).GetBufferHandle());
 
         // Push MV matrix to the vertex shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, MODEL_VIEW_PUSH_CONSTANT_STAGES, 0, modelViewPushConstants);
 
         // Push drawHitTest flag to the geometry shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT, Matrix44f.BYTES, hitTestPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, HIT_TEST_PUSH_CONSTANT_STAGES, Matrix44f.BYTES, hitTestPushConstants);
 
         commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
 
@@ -867,10 +871,16 @@ public class CVKLinksRenderable extends CVKRenderable {
         commandBuffer.BindVertexInput(vertexBuffers.get(imageIndex).GetBufferHandle());
 
         // Push MV matrix to the vertex shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    MODEL_VIEW_PUSH_CONSTANT_STAGES, 
+                                    0, 
+                                    modelViewPushConstants);
 
         // Push drawHitTest flag to the geometry shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT, Matrix44f.BYTES, hitTestPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    HIT_TEST_PUSH_CONSTANT_STAGES,
+                                    MODEL_VIEW_PUSH_CONSTANT_SIZE,
+                                    hitTestPushConstants);
 
         commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
 
@@ -1144,17 +1154,15 @@ public class CVKLinksRenderable extends CVKRenderable {
                
         int ret;       
         try (MemoryStack stack = stackPush()) {  
-            final int vertPushConstantSize = Matrix44f.BYTES;
             VkPushConstantRange.Buffer pushConstantRange;
             pushConstantRange = VkPushConstantRange.calloc(2);
-            pushConstantRange.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            pushConstantRange.get(0).size(vertPushConstantSize);
+            pushConstantRange.get(0).stageFlags(MODEL_VIEW_PUSH_CONSTANT_STAGES);
+            pushConstantRange.get(0).size(MODEL_VIEW_PUSH_CONSTANT_SIZE);
             pushConstantRange.get(0).offset(0);
 
-            final int geomPushConstantSize = Vector4f.BYTES;
-            pushConstantRange.get(1).stageFlags(VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-            pushConstantRange.get(1).size(geomPushConstantSize);
-            pushConstantRange.get(1).offset(vertPushConstantSize);           
+            pushConstantRange.get(1).stageFlags(HIT_TEST_PUSH_CONSTANT_STAGES);
+            pushConstantRange.get(1).size(HIT_TEST_PUSH_CONSTANT_SIZE);
+            pushConstantRange.get(1).offset(MODEL_VIEW_PUSH_CONSTANT_SIZE);           
 
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(stack);
             pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
@@ -1436,46 +1444,25 @@ public class CVKLinksRenderable extends CVKRenderable {
         };  
     }         
     
-    public CVKRenderUpdateTask TaskUpdateColours(final VisualChange change, final VisualAccess access) {
-        //=== EXECUTED BY CALLING THREAD (VisualProcessor) ===//
-        GetLogger().fine("TaskUpdateColours frame %d: %d verts", cvkVisualProcessor.GetFrameNumber(), access.getVertexCount());
-        
-//        // If we have had an update task called before a rebuild task we first have to build
-//        // the staging buffer.  Rebuild also if we our vertex count has somehow changed.
-//        final boolean rebuildRequired = cvkVertexStagingBuffer == null || 
-//                                        access.getVertexCount() * Vertex.SIZEOF != cvkVertexStagingBuffer.GetBufferSize() || 
-//                                        change.isEmpty();
-//        final int changedVerticeRange[];
-//        final Vertex vertices[];
-//        if (rebuildRequired) {
-//            vertices = BuildVertexArray(access, 0, access.getVertexCount() - 1);
-//            changedVerticeRange = null;
-//        } else {
-//            changedVerticeRange = change.getRange();
-//            vertices = BuildVertexArray(access, changedVerticeRange[0], changedVerticeRange[1]);         
-//        }
-        
-        //=== EXECUTED BY RENDER THREAD (during CVKVisualProcessor.ProcessRenderTasks) ===//
-        return () -> {
-//            if (rebuildRequired) {                
-//                RebuildVertexStagingBuffer(vertices);
-//                SetVertexBuffersState(CVK_RESOURCE_NEEDS_REBUILD);
-//                vertexCount = vertices != null ? vertices.length : 0;
-//            } else if (vertexBuffersState != CVK_RESOURCE_NEEDS_REBUILD) {
-//                UpdateVertexStagingBuffer(vertices, changedVerticeRange[0], changedVerticeRange[1]);
-//                SetVertexBuffersState(CVK_RESOURCE_NEEDS_UPDATE);
-//            }
-        };         
-    }       
+    // GraphVisualAccess sends an empty changelist after building the visual 
+    // change with what looks like the full set of transactions.  If this is 
+    // ever fixed so we receive just the transaction that was selected implement
+    // this method and change CVKVisualProcessor to call it instead of TaskUpdateLinks
+    // for CONNECTION_SELECTED and CONNECTION_COLOR.
+//    public CVKRenderUpdateTask TaskConnectionSelected(final VisualChange change, final VisualAccess access)                       
+//    public CVKRenderUpdateTask TaskUpdateColours(final VisualChange change, final VisualAccess access) 
+      
     
     public CVKRenderUpdateTask TaskSetHighlightColour(final VisualAccess access) {
         //=== EXECUTED BY CALLING THREAD (VisualProcessor) ===//
-        GetLogger().fine("TaskSetHighlightColour frame %d: %d verts", cvkVisualProcessor.GetFrameNumber(), access.getVertexCount());
-        
+        final ConstellationColor updatedHighlightColour = access.getHighlightColor();
         
         //=== EXECUTED BY RENDER THREAD (during CVKVisualProcessor.ProcessRenderTasks) ===//
         return () -> {
-
+            highlightColour.set(updatedHighlightColour.getRed(),
+                                updatedHighlightColour.getGreen(),
+                                updatedHighlightColour.getBlue(),
+                                updatedHighlightColour.getAlpha());
         };         
     }    
     
@@ -1502,7 +1489,11 @@ public class CVKLinksRenderable extends CVKRenderable {
     
     // ========================> Helpers <======================== \\
     
-    public long GetVertexBufferHandle(int imageIndex) { return vertexBuffers.get(imageIndex).GetBufferHandle(); }
-    public long GetVertexUniformBufferHandle(int imageIndex) { return vertexUniformBuffers.get(imageIndex).GetBufferHandle(); }
-    public long GetGeometryUniformBufferHandle(int imageIndex) { return geometryUniformBuffers.get(imageIndex).GetBufferHandle(); }
+    protected long GetVertexBufferHandle(int imageIndex) { return vertexBuffers.get(imageIndex).GetBufferHandle(); }
+    protected long GetVertexUniformBufferHandle(int imageIndex) { return vertexUniformBuffers.get(imageIndex).GetBufferHandle(); }
+    protected long GetGeometryUniformBufferHandle(int imageIndex) { return geometryUniformBuffers.get(imageIndex).GetBufferHandle(); }
+    protected ByteBuffer GetModelViewPushConstants() { return modelViewPushConstants; }
+    protected int GetModelViewPushConstantsSize() { return MODEL_VIEW_PUSH_CONSTANT_SIZE; }
+    protected ByteBuffer GetHitTestPushConstants() { return hitTestPushConstants; }
+    protected int GetHitTestPushConstantsSize() { return HIT_TEST_PUSH_CONSTANT_SIZE; }    
 }

@@ -15,55 +15,32 @@
  */
 package au.gov.asd.tac.constellation.visual.vulkan.renderables;
 
-import au.gov.asd.tac.constellation.utilities.color.ConstellationColor;
-import au.gov.asd.tac.constellation.utilities.graphics.Matrix44f;
-import au.gov.asd.tac.constellation.utilities.graphics.Vector4f;
-import au.gov.asd.tac.constellation.utilities.graphics.Vector4i;
-import au.gov.asd.tac.constellation.utilities.text.LabelUtilities;
-import au.gov.asd.tac.constellation.utilities.visual.VisualAccess;
-import au.gov.asd.tac.constellation.utilities.visual.VisualAccess.ConnectionDirection;
-import au.gov.asd.tac.constellation.utilities.visual.VisualChange;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDescriptorPool.CVKDescriptorPoolRequirements;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKDevice;
-import au.gov.asd.tac.constellation.visual.vulkan.CVKRenderUpdateTask;
 import au.gov.asd.tac.constellation.visual.vulkan.CVKSwapChain;
-import au.gov.asd.tac.constellation.visual.vulkan.CVKVisualProcessor;
 import static au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable.CVKRenderableResourceState.CVK_RESOURCE_CLEAN;
 import static au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable.CVKRenderableResourceState.CVK_RESOURCE_NEEDS_REBUILD;
 import static au.gov.asd.tac.constellation.visual.vulkan.renderables.CVKRenderable.CVKRenderableResourceState.CVK_RESOURCE_NEEDS_UPDATE;
-import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKBuffer;
 import au.gov.asd.tac.constellation.visual.vulkan.resourcetypes.CVKCommandBuffer;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssert;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNotNull;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.CVKAssertNull;
-import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.IDENTITY_44F;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkFailed;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.VkSucceeded;
 import static au.gov.asd.tac.constellation.visual.vulkan.utils.CVKUtils.checkVKret;
-import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.SortedMap;
-import java.util.TreeMap;
 import org.lwjgl.system.MemoryStack;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.system.MemoryUtil.memFree;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_LEVEL_SECONDARY;
 import static org.lwjgl.vulkan.VK10.VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_CULL_MODE_NONE;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32A32_SINT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 import static org.lwjgl.vulkan.VK10.VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -74,7 +51,6 @@ import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREA
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
-import static org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX;
 import static org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCreateDescriptorSetLayout;
 import static org.lwjgl.vulkan.VK10.vkCreatePipelineLayout;
@@ -135,16 +111,9 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
     private long hPositionBufferView = VK_NULL_HANDLE;    
     
     // Push constants for shaders contains the MV matrix and drawHitTest int
-    private ByteBuffer vertexPushConstants = null;
-    private ByteBuffer hitTestPushConstants = null;
-    
-    private static final int LINE_INFO_ARROW = 1;
-    private static final int LINE_INFO_BITS_AVOID = 4;
-    private static final int FLOAT_MULTIPLIER = 1024;
-    private static final int NEW_LINK = -345;
-    
-    private float leftOffset;
-    private float rightOffset;
+    private static final int MODEL_VIEW_PUSH_CONSTANT_STAGES = VK_SHADER_STAGE_VERTEX_BIT;
+    private static final int HIT_TEST_PUSH_CONSTANT_STAGES = VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
     
     
     // ========================> Classes <======================== \\
@@ -158,8 +127,7 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
     protected VkVertexInputAttributeDescription.Buffer GetVertexAttributeDescriptions() {
         return CVKLinksRenderable.Vertex.GetAttributeDescriptions();
     }        
- 
-                      
+                       
     
     // ========================> Shaders <======================== \\
     
@@ -180,6 +148,8 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         
         cvkLinks = links;
         
+        cullMode = VK_CULL_MODE_NONE;
+        
         // Assembly
         assemblyTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     }              
@@ -190,9 +160,7 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         if (VkFailed(ret)) { return ret; }
         
         // Check for double initialisation
-        CVKAssert(hDescriptorLayout == VK_NULL_HANDLE);
-
-        CreatePushConstants();         
+        CVKAssert(hDescriptorLayout == VK_NULL_HANDLE);    
         
         ret = CreateDescriptorLayout();
         if (VkFailed(ret)) { return ret; }   
@@ -211,7 +179,6 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         DestroyPipelines();
         DestroyPipelineLayout();
         DestroyCommandBuffers();
-        DestroyPushConstants();
         
         CVKAssertNull(hPositionBufferView); 
         CVKAssertNull(pDescriptorSets);
@@ -219,8 +186,6 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         CVKAssertNull(displayCommandBuffers);        
         CVKAssertNull(displayPipelines);
         CVKAssertNull(hPipelineLayout);    
-        CVKAssertNull(vertexPushConstants);
-        CVKAssertNull(hitTestPushConstants);
     }
     
        
@@ -264,73 +229,7 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
           
     @Override
     public int GetVertexCount() { return cvkLinks.GetVertexCount(); }                   
-    
-    
-    // ========================> Uniform buffers <======================== \\
-    
-    
-
-    // ========================> Push constants <======================== \\
-    
-    private int CreatePushConstants() {
-        // Initialise push constants to identity mtx
-        vertexPushConstants = MemoryUtil.memAlloc(Matrix44f.BYTES);
-        for (int iRow = 0; iRow < 4; ++iRow) {
-            for (int iCol = 0; iCol < 4; ++iCol) {
-                vertexPushConstants.putFloat(IDENTITY_44F.get(iRow, iCol));
-            }
-        }
-        
-        // Set DrawHitTest to false
-        hitTestPushConstants = MemoryUtil.memAlloc(Integer.BYTES);
-        hitTestPushConstants.putInt(0);
-        
-        vertexPushConstants.flip();
-        hitTestPushConstants.flip();
-        
-        return VK_SUCCESS;
-    }
-    
-    private void UpdateVertexPushConstants(){
-        CVKAssertNotNull(cvkSwapChain);
-        
-        vertexPushConstants.clear();
-        Matrix44f mvMatrix = cvkVisualProcessor.getDisplayModelViewMatrix();
-        for (int iRow = 0; iRow < 4; ++iRow) {
-            for (int iCol = 0; iCol < 4; ++iCol) {
-                vertexPushConstants.putFloat(mvMatrix.get(iRow, iCol));
-            }
-        }
-        
-        vertexPushConstants.flip();        
-    }
-    
-    private void UpdatePushConstantsHitTest(boolean drawHitTest){
-        CVKAssertNotNull(cvkSwapChain);
-        
-        hitTestPushConstants.clear();
-        
-        if (drawHitTest) {
-            hitTestPushConstants.putInt(1);
-        } else {
-            hitTestPushConstants.putInt(0);
-        }
-
-        hitTestPushConstants.flip();        
-    }
-    
-    private void DestroyPushConstants() {
-        if (vertexPushConstants != null) {
-            memFree(vertexPushConstants);
-            vertexPushConstants = null;
-        }
-        
-        if (hitTestPushConstants != null) {
-            memFree(hitTestPushConstants);
-            hitTestPushConstants = null;
-        }
-    }
-    
+       
     
     // ========================> Command buffers <======================== \\
     
@@ -344,10 +243,10 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         hittestCommandBuffers = new ArrayList<>(imageCount);
         
         for (int i = 0; i < imageCount; ++i) {
-            CVKCommandBuffer buffer = CVKCommandBuffer.Create(VK_COMMAND_BUFFER_LEVEL_SECONDARY, GetLogger(), String.format("CVKPerspectiveLinksRenderable %d", i));
+            CVKCommandBuffer buffer = CVKCommandBuffer.Create(VK_COMMAND_BUFFER_LEVEL_SECONDARY, GetLogger(), String.format("CVKPerspectiveLinksRenderable Display Command Buffer %d", i));
             displayCommandBuffers.add(buffer);
             
-            CVKCommandBuffer offscreenBuffer = CVKCommandBuffer.Create(VK_COMMAND_BUFFER_LEVEL_SECONDARY, GetLogger(), String.format("CVKPerspectiveLinksRenderable Offscreen Buffer %d", i));
+            CVKCommandBuffer offscreenBuffer = CVKCommandBuffer.Create(VK_COMMAND_BUFFER_LEVEL_SECONDARY, GetLogger(), String.format("CVKPerspectiveLinksRenderable Offscreen Command Buffer %d", i));
             hittestCommandBuffers.add(offscreenBuffer);
         }
         
@@ -388,10 +287,16 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         commandBuffer.BindVertexInput(cvkLinks.GetVertexBufferHandle(imageIndex));
 
         // Push MV matrix to the vertex shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    MODEL_VIEW_PUSH_CONSTANT_STAGES, 
+                                    0, 
+                                    cvkLinks.GetModelViewPushConstants());
 
-        // Push drawHitTest flag to the geometry shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT, Matrix44f.BYTES, hitTestPushConstants);
+        // Push drawHitTest flag to the geometry and fragment shader
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    HIT_TEST_PUSH_CONSTANT_STAGES, 
+                                    cvkLinks.GetModelViewPushConstantsSize(), 
+                                    cvkLinks.GetHitTestPushConstants());
 
         commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
 
@@ -413,7 +318,7 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         int ret;     
         
         // Set the hit test flag in the shaders to true
-        UpdatePushConstantsHitTest(true);            
+        cvkLinks.UpdatePushConstantsHitTest(true);            
 
         CVKCommandBuffer commandBuffer = hittestCommandBuffers.get(imageIndex);          
         CVKAssertNotNull(commandBuffer);
@@ -430,11 +335,17 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         commandBuffer.BindVertexInput(cvkLinks.GetVertexBufferHandle(imageIndex));
 
         // Push MV matrix to the vertex shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, vertexPushConstants);
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    MODEL_VIEW_PUSH_CONSTANT_STAGES, 
+                                    0, 
+                                    cvkLinks.GetModelViewPushConstants());
 
-        // Push drawHitTest flag to the geometry shader
-        commandBuffer.PushConstants(hPipelineLayout, VK_SHADER_STAGE_GEOMETRY_BIT, Matrix44f.BYTES, hitTestPushConstants);
-
+        // Push drawHitTest flag to the geometry and fragment shader
+        commandBuffer.PushConstants(hPipelineLayout, 
+                                    HIT_TEST_PUSH_CONSTANT_STAGES, 
+                                    cvkLinks.GetModelViewPushConstantsSize(), 
+                                    cvkLinks.GetHitTestPushConstants());
+        
         commandBuffer.BindGraphicsDescriptorSets(hPipelineLayout, pDescriptorSets.get(imageIndex));
 
         commandBuffer.Draw(GetVertexCount());
@@ -443,7 +354,7 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         if (VkFailed(ret)) { return ret; }
 
         // Reset hit test flag to false
-        UpdatePushConstantsHitTest(false);
+        cvkLinks.UpdatePushConstantsHitTest(false);
         
         return ret;
     }
@@ -706,18 +617,16 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
         CVKAssertNotNull(hDescriptorLayout);
                
         int ret;       
-        try (MemoryStack stack = stackPush()) {  
-            final int vertPushConstantSize = Matrix44f.BYTES;
+        try (MemoryStack stack = stackPush()) {              
             VkPushConstantRange.Buffer pushConstantRange;
             pushConstantRange = VkPushConstantRange.calloc(2);
-            pushConstantRange.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT);
-            pushConstantRange.get(0).size(vertPushConstantSize);
+            pushConstantRange.get(0).stageFlags(MODEL_VIEW_PUSH_CONSTANT_STAGES);
+            pushConstantRange.get(0).size(cvkLinks.GetModelViewPushConstantsSize());
             pushConstantRange.get(0).offset(0);
 
-            final int geomPushConstantSize = Vector4f.BYTES;
-            pushConstantRange.get(1).stageFlags(VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-            pushConstantRange.get(1).size(geomPushConstantSize);
-            pushConstantRange.get(1).offset(vertPushConstantSize);           
+            pushConstantRange.get(1).stageFlags(HIT_TEST_PUSH_CONSTANT_STAGES);
+            pushConstantRange.get(1).size(cvkLinks.GetHitTestPushConstantsSize());
+            pushConstantRange.get(1).offset(cvkLinks.GetModelViewPushConstantsSize());           
 
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(stack);
             pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
@@ -751,7 +660,9 @@ public class CVKPerspectiveLinksRenderable extends CVKRenderable {
             }
         }        
 //!! Do we need to track the UBO and vertex states of links some how?
-        
+// Could change renderer to cache the results of NeedsDisplayUpdate and use that
+// to decide which renderables to call DisplayUpdate on.  This would allow
+// CVKPerspectiveLinksRenderable to defer to CVKLinksRenderable.
         return cvkLinks.GetVertexCount() > 0 &&
                (commandBuffersState != CVK_RESOURCE_CLEAN ||
                 descriptorSetsState != CVK_RESOURCE_CLEAN ||
